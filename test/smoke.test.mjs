@@ -1,10 +1,11 @@
 // End-to-end smoke test: serves the app, drives it in headless Chromium and verifies
 // import → timeline editing → playback → voice-over recording → export (validated with ffmpeg).
 import http from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { chromium } from 'playwright';
+import { findFfmpeg } from './gen-fixtures.mjs';
 
 const root = new URL('../', import.meta.url).pathname;
 const fixtures = join(root, 'test/fixtures');
@@ -252,7 +253,7 @@ try {
   check('export produced data', exp.size > 20000 && exp.progressSamples > 3 && exp.maxProgress > 0.9, `size=${exp.size} mime=${exp.mime} duration=${exp.duration.toFixed(2)} formats=${exp.formats.length}`);
   const outFile = join(outDir, 'export.' + exp.ext);
   writeFileSync(outFile, Buffer.from(exp.b64, 'base64'));
-  const ffmpeg = (() => { const r = process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/pw-browsers'; for (const d of readdirSync(r)) if (d.startsWith('ffmpeg')) return join(r, d, 'ffmpeg-linux'); return 'ffmpeg'; })();
+  const ffmpeg = findFfmpeg();
   const probe = spawnSync(ffmpeg, ['-hide_banner', '-i', outFile], { encoding: 'utf8' }).stderr;
   const durMatch = probe.match(/Duration: (\d+):(\d+):(\d+\.\d+)/);
   const probedDur = durMatch ? (+durMatch[1]) * 3600 + (+durMatch[2]) * 60 + (+durMatch[3]) : NaN;

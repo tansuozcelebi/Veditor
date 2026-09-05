@@ -1,5 +1,7 @@
 # Veditor – Çok Kanallı Tarayıcı Video Editörü / Multi-track Browser Video Editor
 
+[![CI](https://github.com/tansuozcelebi/Veditor/actions/workflows/ci.yml/badge.svg)](https://github.com/tansuozcelebi/Veditor/actions/workflows/ci.yml)
+
 Veditor, tamamen tarayıcıda çalışan (sunucu ve derleme adımı gerektirmeyen) çok kanallı bir video editörüdür.
 Birden fazla video/ses kanalını aynı anda oynatır, kliplerinizi keser/böler/taşır, ses ekleyip mikserler,
 seslendirme kaydeder ve sonucu tek bir video dosyası olarak dışa aktarır.
@@ -94,8 +96,14 @@ miks hem hoparlöre hem de dışa aktarma için `MediaStreamDestination`'a gider
 ## Test
 
 ```bash
+npm install          # playwright + eslint (geliştirme bağımlılıkları)
+npx playwright install chromium
+npm run lint
 npm test
 ```
+
+Aynı adımlar GitHub Actions üzerinde her push ve pull request için otomatik çalışır (`.github/workflows/ci.yml`);
+ekran görüntüsü ve dışa aktarılan örnek video iş akışı çıktısı olarak yüklenir.
 
 Test, uygulamayı yerel bir sunucudan başsız Chromium'da açar; deterministik fikstürler (iki VP8 video, WAV ton, PNG)
 üretir, içe aktarma → yerleştirme → bölme/geri alma → fare ile sürükleme/kırpma → oynatma/kompozit/ızgara → sesi ayırma →
