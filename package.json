@@ -1,0 +1,16 @@
+{
+  "name": "veditor",
+  "version": "1.0.0",
+  "description": "Browser-based multi-track video editor: multi-channel player, audio mixing, voice-over and export (no build step).",
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes http-server . -p 8080 -c-1 -o",
+    "serve": "npx --yes http-server . -p 8080 -c-1",
+    "test": "node test/smoke.test.mjs",
+    "lint": "npx --yes eslint ."
+  },
+  "devDependencies": {
+    "playwright": "^1.56.1"
+  },
+  "license": "MIT"
+}

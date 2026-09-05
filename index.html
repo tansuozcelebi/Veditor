@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Veditor – Çok Kanallı Video Editörü</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <!-- ===== Top bar ===== -->
+    <header class="topbar">
+      <div class="brand">
+        <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="3" fill="#ff3b3b"/><path d="M10 8.5v7l6-3.5-6-3.5z" fill="#fff"/></svg>
+        <span>Veditor</span>
+      </div>
+      <input id="projectName" class="project-name" type="text" value="Yeni Proje" spellcheck="false" />
+      <div class="topbar-actions">
+        <button id="btnOpenProject" class="btn ghost" data-i18n-title="project.open" title="">
+          <span class="ico">📂</span><span data-i18n="project.open">Aç</span>
+        </button>
+        <button id="btnSaveProject" class="btn ghost" data-i18n-title="project.save" title="">
+          <span class="ico">💾</span><span data-i18n="project.save">Kaydet</span>
+        </button>
+        <select id="langSelect" class="select small" aria-label="Language">
+          <option value="tr">TR</option>
+          <option value="en">EN</option>
+        </select>
+        <button id="btnExport" class="btn primary">
+          <span class="ico">⬇</span><span data-i18n="export.button">Dışa Aktar</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ===== Main workspace ===== -->
+    <main class="workspace">
+      <!-- Left: media library -->
+      <aside class="panel library" id="libraryPanel">
+        <div class="panel-head">
+          <h2 data-i18n="library.title">Medya</h2>
+          <div class="panel-head-actions">
+            <button id="btnRecordVoice" class="btn small" data-i18n-title="record.title" title="">🎙 <span data-i18n="record.button">Ses Kaydet</span></button>
+            <button id="btnImport" class="btn small primary">＋ <span data-i18n="library.import">İçe Aktar</span></button>
+          </div>
+        </div>
+        <input type="file" id="fileInput" multiple accept="video/*,audio/*,image/*" hidden />
+        <div class="dropzone" id="libraryDrop">
+          <div id="libraryList" class="library-list"></div>
+          <div id="libraryEmpty" class="empty-hint">
+            <div class="empty-icon">🎬</div>
+            <p data-i18n="library.empty">Video, ses veya görsel dosyalarını buraya sürükleyin ya da “İçe Aktar”a tıklayın.</p>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Center: preview -->
+      <section class="preview" id="previewPanel">
+        <div class="preview-stage" id="previewStage">
+          <canvas id="previewCanvas" width="1920" height="1080"></canvas>
+          <div class="preview-overlay" id="previewOverlay"></div>
+        </div>
+        <div class="preview-controls">
+          <div class="pc-left">
+            <button id="btnGoStart" class="icon-btn" data-i18n-title="player.goStart" title="">⏮</button>
+            <button id="btnBack5" class="icon-btn" data-i18n-title="player.back5" title="">↺5</button>
+            <button id="btnPrevFrame" class="icon-btn" data-i18n-title="player.prevFrame" title="">◀</button>
+            <button id="btnPlay" class="icon-btn play" data-i18n-title="player.play" title="">▶</button>
+            <button id="btnNextFrame" class="icon-btn" data-i18n-title="player.nextFrame" title="">▶</button>
+            <button id="btnFwd5" class="icon-btn" data-i18n-title="player.fwd5" title="">5↻</button>
+            <button id="btnGoEnd" class="icon-btn" data-i18n-title="player.goEnd" title="">⏭</button>
+          </div>
+          <div class="pc-center">
+            <span id="timeCurrent" class="time-display">00:00.000</span>
+            <span class="time-sep">/</span>
+            <span id="timeTotal" class="time-display dim">00:00.000</span>
+          </div>
+          <div class="pc-right">
+            <label class="view-toggle" data-i18n-title="player.viewMode" title="">
+              <select id="viewMode" class="select small">
+                <option value="composite" data-i18n="player.composite">Kompozit</option>
+                <option value="grid" data-i18n="player.grid">Kanal Izgarası</option>
+              </select>
+            </label>
+            <button id="btnMonitorMute" class="icon-btn" data-i18n-title="player.mute" title="">🔊</button>
+            <input id="monitorVolume" type="range" min="0" max="1" step="0.01" value="1" class="slider small" />
+            <button id="btnFullscreen" class="icon-btn" data-i18n-title="player.fullscreen" title="">⛶</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right: inspector -->
+      <aside class="panel inspector" id="inspectorPanel">
+        <div class="panel-head"><h2 id="inspectorTitle" data-i18n="inspector.title">Özellikler</h2></div>
+        <div id="inspectorBody" class="inspector-body"></div>
+      </aside>
+    </main>
+
+    <!-- ===== Timeline ===== -->
+    <section class="timeline" id="timelinePanel">
+      <div class="tl-toolbar">
+        <div class="tl-group">
+          <button id="btnUndo" class="btn ghost small" data-i18n-title="edit.undo" title="">↶ <span data-i18n="edit.undo">Geri al</span></button>
+          <button id="btnRedo" class="btn ghost small" data-i18n-title="edit.redo" title="">↷ <span data-i18n="edit.redo">Yeniden yap</span></button>
+        </div>
+        <div class="tl-group">
+          <button id="btnSplit" class="btn small" data-i18n-title="edit.splitHint" title="">✂ <span data-i18n="edit.split">Böl</span></button>
+          <button id="btnDelete" class="btn small" data-i18n-title="edit.deleteHint" title="">🗑 <span data-i18n="edit.delete">Sil</span></button>
+          <button id="btnDuplicate" class="btn small" data-i18n-title="edit.duplicate" title="">⧉ <span data-i18n="edit.duplicate">Çoğalt</span></button>
+          <button id="btnDetachAudio" class="btn small" data-i18n-title="edit.detachAudioHint" title="">🎵 <span data-i18n="edit.detachAudio">Sesi Ayır</span></button>
+        </div>
+        <div class="tl-group">
+          <button id="btnAddVideoTrack" class="btn small">＋🎞 <span data-i18n="track.addVideo">Video Kanalı</span></button>
+          <button id="btnAddAudioTrack" class="btn small">＋🎵 <span data-i18n="track.addAudio">Ses Kanalı</span></button>
+        </div>
+        <div class="tl-group grow"></div>
+        <div class="tl-group">
+          <label class="check"><input type="checkbox" id="snapToggle" checked /> <span data-i18n="timeline.snap">Yapış</span></label>
+          <button id="btnZoomOut" class="icon-btn" data-i18n-title="timeline.zoomOut" title="">−</button>
+          <input id="zoomSlider" type="range" min="0" max="100" value="35" class="slider" />
+          <button id="btnZoomIn" class="icon-btn" data-i18n-title="timeline.zoomIn" title="">＋</button>
+          <button id="btnZoomFit" class="btn ghost small" data-i18n-title="timeline.zoomFit" title="">⤢</button>
+        </div>
+      </div>
+      <div class="tl-body" id="tlBody">
+        <div class="tl-corner"></div>
+        <div class="tl-ruler-wrap" id="tlRulerWrap"><canvas id="tlRuler"></canvas></div>
+        <div class="tl-headers" id="tlHeaders"></div>
+        <div class="tl-lanes" id="tlLanes">
+          <div class="tl-lanes-inner" id="tlLanesInner"></div>
+        </div>
+        <div class="tl-playhead" id="tlPlayhead"><div class="tl-playhead-cap"></div></div>
+      </div>
+    </section>
+
+    <!-- hidden media element host (must not be display:none for video decoding) -->
+    <div id="mediaHost" class="media-host" aria-hidden="true"></div>
+
+    <!-- ===== Modals ===== -->
+    <div id="modalRoot"></div>
+    <div id="toastRoot" class="toast-root"></div>
+    <div id="contextMenu" class="context-menu" hidden></div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

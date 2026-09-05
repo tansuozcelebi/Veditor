@@ -1,0 +1,157 @@
+// ===================== i18n (TR / EN) =====================
+const dict = {
+  tr: {
+    'project.open': 'Aç', 'project.save': 'Kaydet', 'project.default': 'Yeni Proje',
+    'export.button': 'Dışa Aktar',
+    'library.title': 'Medya', 'library.import': 'İçe Aktar',
+    'library.empty': 'Video, ses veya görsel dosyalarını buraya sürükleyin ya da “İçe Aktar”a tıklayın.',
+    'library.addToTimeline': 'Zaman çizelgesine ekle (oynatma kafasına)', 'library.remove': 'Medyayı kaldır',
+    'library.analyzing': 'Analiz ediliyor…', 'library.removeConfirm': 'Bu medya ve zaman çizelgesindeki tüm klipleri silinsin mi?',
+    'library.unsupported': 'Desteklenmeyen dosya: {name}', 'library.loadError': 'Dosya yüklenemedi: {name}',
+    'library.imported': '{n} dosya içe aktarıldı',
+    'record.title': 'Mikrofondan ses kaydet (seslendirme)', 'record.button': 'Ses Kaydet',
+    'record.dialogTitle': 'Ses Kaydı (Seslendirme)', 'record.start': 'Kaydı Başlat', 'record.stop': 'Kaydı Durdur',
+    'record.playWhile': 'Kayıt sırasında zaman çizelgesini oynat', 'record.addToTimeline': 'Kaydı ses kanalına ekle',
+    'record.hint': 'Kayıt, oynatma kafasının bulunduğu konumdan başlar ve durdurduğunuzda bir ses klibi olarak eklenir.',
+    'record.permissionDenied': 'Mikrofon erişimi reddedildi.', 'record.noMic': 'Mikrofon bulunamadı veya tarayıcı desteklemiyor.',
+    'record.saved': 'Ses kaydı eklendi ({d})',
+    'player.goStart': 'Başa git (Home)', 'player.back5': '5 sn geri (J)', 'player.prevFrame': 'Önceki kare (←)',
+    'player.play': 'Oynat / Duraklat (Boşluk)', 'player.nextFrame': 'Sonraki kare (→)', 'player.fwd5': '5 sn ileri (L)',
+    'player.goEnd': 'Sona git (End)', 'player.viewMode': 'Görünüm modu', 'player.composite': 'Kompozit',
+    'player.grid': 'Kanal Izgarası', 'player.mute': 'Monitör sesini kapat/aç', 'player.fullscreen': 'Tam ekran',
+    'inspector.title': 'Özellikler', 'inspector.project': 'Proje Ayarları', 'inspector.clip': 'Klip', 'inspector.track': 'Kanal',
+    'inspector.name': 'Ad', 'inspector.resolution': 'Çözünürlük', 'inspector.width': 'Genişlik', 'inspector.height': 'Yükseklik',
+    'inspector.fps': 'Kare Hızı (FPS)', 'inspector.background': 'Arka Plan', 'inspector.custom': 'Özel',
+    'inspector.start': 'Başlangıç (sn)', 'inspector.duration': 'Süre (sn)', 'inspector.offset': 'Kaynak Başlangıcı (sn)',
+    'inspector.volume': 'Ses Seviyesi', 'inspector.muted': 'Sessiz', 'inspector.fadeIn': 'Ses Girişi (sn)', 'inspector.fadeOut': 'Ses Çıkışı (sn)',
+    'inspector.opacity': 'Opaklık', 'inspector.fit': 'Sığdırma', 'inspector.fitContain': 'Sığdır', 'inspector.fitCover': 'Kapla',
+    'inspector.fitStretch': 'Esnet', 'inspector.scale': 'Ölçek', 'inspector.posX': 'Konum X (%)', 'inspector.posY': 'Konum Y (%)',
+    'inspector.audioSection': 'Ses', 'inspector.videoSection': 'Görüntü', 'inspector.timingSection': 'Zamanlama',
+    'inspector.layoutPresets': 'Yerleşim', 'inspector.presetFull': 'Tam', 'inspector.presetPipTL': 'PiP Sol Üst', 'inspector.presetPipTR': 'PiP Sağ Üst',
+    'inspector.presetPipBL': 'PiP Sol Alt', 'inspector.presetPipBR': 'PiP Sağ Alt', 'inspector.presetLeft': 'Sol Yarı', 'inspector.presetRight': 'Sağ Yarı',
+    'inspector.trackMute': 'Sessiz', 'inspector.trackSolo': 'Solo', 'inspector.trackLock': 'Kilitli', 'inspector.trackHidden': 'Gizli',
+    'inspector.deleteTrack': 'Kanalı Sil', 'inspector.clipCount': '{n} klip', 'inspector.media': 'Medya',
+    'inspector.shortcuts': 'Kısayollar', 'inspector.noSelection': 'Bir klip veya kanal seçin. Proje ayarları aşağıdadır.',
+    'sc.play': 'Oynat/Duraklat', 'sc.split': 'Oynatma kafasında böl', 'sc.delete': 'Seçili klibi sil', 'sc.undo': 'Geri al', 'sc.redo': 'Yeniden yap',
+    'sc.frame': 'Kare kare ilerle', 'sc.zoom': 'Yakınlaştır / Uzaklaştır', 'sc.home': 'Başa / Sona git', 'sc.dup': 'Çoğalt',
+    'edit.undo': 'Geri al', 'edit.redo': 'Yeniden yap', 'edit.split': 'Böl', 'edit.splitHint': 'Seçili klibi oynatma kafasında böl (S)',
+    'edit.delete': 'Sil', 'edit.deleteHint': 'Seçili klipleri sil (Delete)', 'edit.duplicate': 'Çoğalt',
+    'edit.detachAudio': 'Sesi Ayır', 'edit.detachAudioHint': 'Video klibin sesini ayrı bir ses kanalına kopyala',
+    'edit.detachDone': 'Ses ayrı kanala kopyalandı', 'edit.detachNoAudio': 'Seçili klip bir video kanalındaki video klip olmalı',
+    'edit.splitNone': 'Oynatma kafası seçili klibin içinde değil',
+    'track.addVideo': 'Video Kanalı', 'track.addAudio': 'Ses Kanalı', 'track.video': 'Video', 'track.audio': 'Ses',
+    'track.deleteConfirm': 'Bu kanal ve üzerindeki {n} klip silinsin mi?', 'track.locked': 'Kanal kilitli',
+    'timeline.snap': 'Yapış', 'timeline.zoomIn': 'Yakınlaştır', 'timeline.zoomOut': 'Uzaklaştır', 'timeline.zoomFit': 'Tümünü sığdır',
+    'timeline.dropIncompatible': 'Bu medya bu kanala eklenemez', 'timeline.noSpace': 'Bu konumda yeterli boş alan yok',
+    'timeline.autoTrack': 'Uygun kanal bulunamadı, yeni kanal oluşturuldu',
+    'menu.split': 'Oynatma kafasında böl', 'menu.duplicate': 'Çoğalt', 'menu.detach': 'Sesi ayrı kanala kopyala', 'menu.mute': 'Sessiz yap',
+    'menu.unmute': 'Sesi aç', 'menu.delete': 'Sil', 'menu.selectMedia': 'Medyayı kitaplıkta göster',
+    'export.title': 'Dışa Aktar', 'export.format': 'Biçim', 'export.resolution': 'Çözünürlük', 'export.fps': 'Kare Hızı',
+    'export.quality': 'Kalite', 'export.qLow': 'Düşük (2 Mb/s)', 'export.qMed': 'Orta (6 Mb/s)', 'export.qHigh': 'Yüksek (12 Mb/s)', 'export.qUltra': 'Çok Yüksek (25 Mb/s)',
+    'export.filename': 'Dosya adı', 'export.muteMonitor': 'Dışa aktarırken hoparlör sesini kapat', 'export.start': 'Dışa Aktarmayı Başlat',
+    'export.cancel': 'İptal', 'export.close': 'Kapat', 'export.progress': 'Dışa aktarılıyor… {p}%  ({t} / {d})',
+    'export.finalizing': 'Dosya hazırlanıyor…', 'export.done': 'Dışa aktarma tamamlandı ({size})', 'export.download': 'İndir',
+    'export.empty': 'Zaman çizelgesi boş; dışa aktarılacak bir şey yok.', 'export.noSupport': 'Tarayıcınız MediaRecorder dışa aktarmayı desteklemiyor.',
+    'export.realtimeNote': 'Dışa aktarma gerçek zamanlı çalışır: {d} sürecektir. Sekmeyi ön planda tutun; arka plandaki sekmelerde kare üretimi durur.',
+    'export.cancelled': 'Dışa aktarma iptal edildi', 'export.error': 'Dışa aktarma hatası: {e}', 'export.audioOnly': 'Yalnızca ses',
+    'export.range': 'Aralık', 'export.rangeAll': 'Tüm proje ({d})',
+    'project.saved': 'Proje dosyası indirildi', 'project.openTitle': 'Proje Aç', 'project.relink': 'Medya dosyalarını yeniden seçin',
+    'project.relinkHint': 'Proje dosyası medyayı içermez. Aşağıdaki dosyaları bilgisayarınızdan seçin (adına göre eşleştirilir).',
+    'project.chooseFiles': 'Dosyaları Seç', 'project.load': 'Projeyi Yükle', 'project.loadError': 'Proje dosyası okunamadı',
+    'project.loaded': 'Proje yüklendi ({n} klip)', 'project.missingDropped': '{n} eşleşmeyen klip atlandı', 'project.found': 'bulundu', 'project.missing': 'eksik',
+    'common.cancel': 'İptal', 'common.ok': 'Tamam', 'common.yes': 'Evet', 'common.no': 'Hayır', 'common.close': 'Kapat',
+    'common.confirm': 'Onay',
+    'kind.video': 'Video', 'kind.audio': 'Ses', 'kind.image': 'Görsel',
+    'warn.unsaved': 'Kaydedilmemiş değişiklikler var. Sayfadan ayrılmak istiyor musunuz?',
+  },
+  en: {
+    'project.open': 'Open', 'project.save': 'Save', 'project.default': 'New Project',
+    'export.button': 'Export',
+    'library.title': 'Media', 'library.import': 'Import',
+    'library.empty': 'Drag video, audio or image files here, or click “Import”.',
+    'library.addToTimeline': 'Add to timeline (at playhead)', 'library.remove': 'Remove media',
+    'library.analyzing': 'Analyzing…', 'library.removeConfirm': 'Remove this media and all its clips from the timeline?',
+    'library.unsupported': 'Unsupported file: {name}', 'library.loadError': 'Could not load file: {name}',
+    'library.imported': '{n} file(s) imported',
+    'record.title': 'Record audio from microphone (voice-over)', 'record.button': 'Record',
+    'record.dialogTitle': 'Voice-over Recording', 'record.start': 'Start Recording', 'record.stop': 'Stop Recording',
+    'record.playWhile': 'Play timeline while recording', 'record.addToTimeline': 'Add recording to an audio track',
+    'record.hint': 'Recording starts at the playhead position and is added as an audio clip when you stop.',
+    'record.permissionDenied': 'Microphone access denied.', 'record.noMic': 'No microphone found or browser unsupported.',
+    'record.saved': 'Recording added ({d})',
+    'player.goStart': 'Go to start (Home)', 'player.back5': 'Back 5 s (J)', 'player.prevFrame': 'Previous frame (←)',
+    'player.play': 'Play / Pause (Space)', 'player.nextFrame': 'Next frame (→)', 'player.fwd5': 'Forward 5 s (L)',
+    'player.goEnd': 'Go to end (End)', 'player.viewMode': 'View mode', 'player.composite': 'Composite',
+    'player.grid': 'Channel Grid', 'player.mute': 'Mute/unmute monitor', 'player.fullscreen': 'Fullscreen',
+    'inspector.title': 'Properties', 'inspector.project': 'Project Settings', 'inspector.clip': 'Clip', 'inspector.track': 'Track',
+    'inspector.name': 'Name', 'inspector.resolution': 'Resolution', 'inspector.width': 'Width', 'inspector.height': 'Height',
+    'inspector.fps': 'Frame Rate (FPS)', 'inspector.background': 'Background', 'inspector.custom': 'Custom',
+    'inspector.start': 'Start (s)', 'inspector.duration': 'Duration (s)', 'inspector.offset': 'Source In (s)',
+    'inspector.volume': 'Volume', 'inspector.muted': 'Muted', 'inspector.fadeIn': 'Fade In (s)', 'inspector.fadeOut': 'Fade Out (s)',
+    'inspector.opacity': 'Opacity', 'inspector.fit': 'Fit', 'inspector.fitContain': 'Contain', 'inspector.fitCover': 'Cover',
+    'inspector.fitStretch': 'Stretch', 'inspector.scale': 'Scale', 'inspector.posX': 'Position X (%)', 'inspector.posY': 'Position Y (%)',
+    'inspector.audioSection': 'Audio', 'inspector.videoSection': 'Video', 'inspector.timingSection': 'Timing',
+    'inspector.layoutPresets': 'Layout', 'inspector.presetFull': 'Full', 'inspector.presetPipTL': 'PiP Top-Left', 'inspector.presetPipTR': 'PiP Top-Right',
+    'inspector.presetPipBL': 'PiP Bottom-Left', 'inspector.presetPipBR': 'PiP Bottom-Right', 'inspector.presetLeft': 'Left Half', 'inspector.presetRight': 'Right Half',
+    'inspector.trackMute': 'Mute', 'inspector.trackSolo': 'Solo', 'inspector.trackLock': 'Locked', 'inspector.trackHidden': 'Hidden',
+    'inspector.deleteTrack': 'Delete Track', 'inspector.clipCount': '{n} clip(s)', 'inspector.media': 'Media',
+    'inspector.shortcuts': 'Shortcuts', 'inspector.noSelection': 'Select a clip or a track. Project settings are below.',
+    'sc.play': 'Play/Pause', 'sc.split': 'Split at playhead', 'sc.delete': 'Delete selected clip', 'sc.undo': 'Undo', 'sc.redo': 'Redo',
+    'sc.frame': 'Step by frame', 'sc.zoom': 'Zoom in / out', 'sc.home': 'Go to start / end', 'sc.dup': 'Duplicate',
+    'edit.undo': 'Undo', 'edit.redo': 'Redo', 'edit.split': 'Split', 'edit.splitHint': 'Split selected clip at playhead (S)',
+    'edit.delete': 'Delete', 'edit.deleteHint': 'Delete selected clips (Delete)', 'edit.duplicate': 'Duplicate',
+    'edit.detachAudio': 'Detach Audio', 'edit.detachAudioHint': 'Copy the video clip audio to a separate audio track',
+    'edit.detachDone': 'Audio copied to a separate track', 'edit.detachNoAudio': 'Selected clip must be a video clip on a video track',
+    'edit.splitNone': 'Playhead is not inside the selected clip',
+    'track.addVideo': 'Video Track', 'track.addAudio': 'Audio Track', 'track.video': 'Video', 'track.audio': 'Audio',
+    'track.deleteConfirm': 'Delete this track and its {n} clip(s)?', 'track.locked': 'Track is locked',
+    'timeline.snap': 'Snap', 'timeline.zoomIn': 'Zoom in', 'timeline.zoomOut': 'Zoom out', 'timeline.zoomFit': 'Fit all',
+    'timeline.dropIncompatible': 'This media cannot be placed on this track', 'timeline.noSpace': 'Not enough free space at this position',
+    'timeline.autoTrack': 'No suitable track found, a new track was created',
+    'menu.split': 'Split at playhead', 'menu.duplicate': 'Duplicate', 'menu.detach': 'Copy audio to separate track', 'menu.mute': 'Mute',
+    'menu.unmute': 'Unmute', 'menu.delete': 'Delete', 'menu.selectMedia': 'Reveal media in library',
+    'export.title': 'Export', 'export.format': 'Format', 'export.resolution': 'Resolution', 'export.fps': 'Frame Rate',
+    'export.quality': 'Quality', 'export.qLow': 'Low (2 Mb/s)', 'export.qMed': 'Medium (6 Mb/s)', 'export.qHigh': 'High (12 Mb/s)', 'export.qUltra': 'Very High (25 Mb/s)',
+    'export.filename': 'File name', 'export.muteMonitor': 'Mute speakers while exporting', 'export.start': 'Start Export',
+    'export.cancel': 'Cancel', 'export.close': 'Close', 'export.progress': 'Exporting… {p}%  ({t} / {d})',
+    'export.finalizing': 'Finalizing file…', 'export.done': 'Export complete ({size})', 'export.download': 'Download',
+    'export.empty': 'The timeline is empty; nothing to export.', 'export.noSupport': 'Your browser does not support MediaRecorder export.',
+    'export.realtimeNote': 'Export runs in real time and will take {d}. Keep this tab in the foreground; background tabs stop producing frames.',
+    'export.cancelled': 'Export cancelled', 'export.error': 'Export error: {e}', 'export.audioOnly': 'Audio only',
+    'export.range': 'Range', 'export.rangeAll': 'Whole project ({d})',
+    'project.saved': 'Project file downloaded', 'project.openTitle': 'Open Project', 'project.relink': 'Re-select media files',
+    'project.relinkHint': 'The project file does not contain media. Select the files below from your computer (matched by name).',
+    'project.chooseFiles': 'Choose Files', 'project.load': 'Load Project', 'project.loadError': 'Could not read project file',
+    'project.loaded': 'Project loaded ({n} clips)', 'project.missingDropped': '{n} unmatched clip(s) skipped', 'project.found': 'found', 'project.missing': 'missing',
+    'common.cancel': 'Cancel', 'common.ok': 'OK', 'common.yes': 'Yes', 'common.no': 'No', 'common.close': 'Close',
+    'common.confirm': 'Confirm',
+    'kind.video': 'Video', 'kind.audio': 'Audio', 'kind.image': 'Image',
+    'warn.unsaved': 'You have unsaved changes. Leave the page?',
+  },
+};
+
+let lang = 'tr';
+try {
+  const saved = localStorage.getItem('veditor.lang');
+  if (saved && dict[saved]) lang = saved;
+  else if (!(navigator.language || '').toLowerCase().startsWith('tr')) lang = 'en';
+} catch { /* ignore */ }
+
+export function t(key, vars) {
+  let s = (dict[lang] && dict[lang][key]) ?? dict.en[key] ?? key;
+  if (vars) for (const [k, v] of Object.entries(vars)) s = s.replace(new RegExp('\\{' + k + '\\}', 'g'), String(v));
+  return s;
+}
+export function getLang() { return lang; }
+export function setLang(l) {
+  if (!dict[l]) return;
+  lang = l;
+  try { localStorage.setItem('veditor.lang', l); } catch { /* ignore */ }
+  document.documentElement.lang = l;
+  applyStatic();
+}
+export function applyStatic(root = document) {
+  root.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  root.querySelectorAll('[data-i18n-title]').forEach((el) => { el.title = t(el.dataset.i18nTitle); });
+  root.querySelectorAll('[data-i18n-placeholder]').forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+}
