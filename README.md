@@ -105,6 +105,13 @@ npm test
 Aynı adımlar GitHub Actions üzerinde her push ve pull request için otomatik çalışır (`.github/workflows/ci.yml`);
 ekran görüntüsü ve dışa aktarılan örnek video iş akışı çıktısı olarak yüklenir.
 
+### Otomatik birleştirme (auto-merge)
+
+Özel depolarda ücretsiz planda dal koruma kuralı olmadığı için GitHub'ın kendi auto-merge'i CI'yı bekleyemez.
+Bu yüzden iş akışında CI'ya bağlı bir `automerge` işi vardır: **`automerge` etiketi** taşıyan ve taslak olmayan bir
+pull request, test işi yeşil olur olmaz merge commit ile `main` dalına birleştirilir. Etiketi kaldırmak veya PR'ı
+taslağa çevirmek otomatik birleştirmeyi durdurur.
+
 Test, uygulamayı yerel bir sunucudan başsız Chromium'da açar; deterministik fikstürler (iki VP8 video, WAV ton, PNG)
 üretir, içe aktarma → yerleştirme → bölme/geri alma → fare ile sürükleme/kırpma → oynatma/kompozit/ızgara → sesi ayırma →
 sahte mikrofonla seslendirme kaydı → proje kaydet/aç → dışa aktarma akışını doğrular ve çıktıyı Playwright ile gelen

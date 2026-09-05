@@ -4,7 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -50,3 +54,24 @@ jobs:
           name: test-output
           path: test/output/
           if-no-files-found: ignore
+
+  # CI-gated auto-merge for private repositories on plans without branch protection:
+  # a PR that carries the "automerge" label and is not a draft is merged as soon as the test job is green.
+  automerge:
+    name: Auto-merge (label "automerge")
+    needs: test
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'automerge')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Merge the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge "$PR_URL" --merge --delete-branch=false
