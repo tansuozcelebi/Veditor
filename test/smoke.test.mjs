@@ -109,6 +109,8 @@ try {
     const { player, store } = window.veditor;
     player.seek(store.getClip(b).start + 0.2); await player.play();
     await new Promise((r) => setTimeout(r, 1500));
+    // give slow decoders (loaded CI machines) a moment: wait until every active visual element has a frame
+    for (let i = 0; i < 40 && player._visualClips(player.currentTime).some(({ clip }) => player.nodes.get(clip.id)?.el.readyState < 2); i++) await new Promise((r) => setTimeout(r, 100));
     const t = player.currentTime; const playing = player.playing;
     const g = player.canvas.getContext('2d');
     const px = g.getImageData(player.canvas.width / 2, player.canvas.height / 2, 1, 1).data; // centre of frame → clipA blue
@@ -126,6 +128,8 @@ try {
   const grid = await page.evaluate(async ({ b }) => {
     const { player, store } = window.veditor; player.viewMode = 'grid'; player.seek(store.getClip(b).start + 0.5);
     await new Promise((r) => setTimeout(r, 400)); // let both decoders deliver the seeked frame
+    for (let i = 0; i < 40 && player._visualClips(player.currentTime).some(({ clip }) => player.nodes.get(clip.id)?.el.readyState < 2); i++) await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 50)); // one more frame so the render loop draws the ready frame
     const g = player.canvas.getContext('2d'); const W = player.canvas.width, H = player.canvas.height;
     const left = g.getImageData(Math.round(W * 0.25), Math.round(H * 0.5), 1, 1).data; const right = g.getImageData(Math.round(W * 0.75), Math.round(H * 0.5), 1, 1).data;
     const tm = player.currentTime;

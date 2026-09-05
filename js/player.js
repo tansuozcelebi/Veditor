@@ -49,8 +49,8 @@ export class Player extends Emitter {
     this.monitorGain.connect(ctx.destination);
     this.mixBus.connect(this.recDest);
     this._applyMonitor();
-    // rebuild nodes for existing clips now that the context exists (they were created muted)
-    for (const id of [...this.nodes.keys()]) this._disposeNode(id);
+    // attach the audio graph to elements that were created before the context existed
+    // (they were kept muted); re-using them avoids reloading and re-decoding the media
     this._syncNodes();
     return ctx;
   }
@@ -83,6 +83,7 @@ export class Player extends Emitter {
       let n = this.nodes.get(c.id);
       if (n && n.mediaId !== c.mediaId) { this._disposeNode(c.id); n = null; }
       if (!n) n = this._createNode(c, m);
+      if (this.audio && n.el && n.kind !== 'image' && !n.src) this._attachAudio(n);
       // (re)connect track gain if track changed
       if (n.gain && n.trackId !== c.trackId) {
         try { n.gain.disconnect(); } catch { /* ignore */ }
@@ -107,20 +108,23 @@ export class Player extends Emitter {
       el.addEventListener('loadeddata', () => { n.ready = true; });
       this.host.appendChild(el);
       n.el = el;
-      if (this.audio) {
-        try {
-          n.src = this.audio.createMediaElementSource(el);
-          n.gain = this.audio.createGain();
-          n.gain.gain.value = 0;
-          n.src.connect(n.gain);
-        } catch (e) { console.warn('audio source failed', e); }
-      } else {
-        el.muted = true; // no audio graph yet: keep silent until the context exists
-      }
+      el.muted = true; // silent until the element is routed through the audio graph
+      if (this.audio) this._attachAudio(n);
       el.load();
     }
     this.nodes.set(clip.id, n);
     return n;
+  }
+  /** Route an element through its own GainNode into the mix bus. */
+  _attachAudio(n) {
+    try {
+      n.src = this.audio.createMediaElementSource(n.el);
+      n.gain = this.audio.createGain();
+      n.gain.gain.value = 0;
+      n.src.connect(n.gain);
+      n.el.muted = false;
+      n.trackId = null; // force (re)connection to the track gain in _syncNodes
+    } catch (e) { console.warn('audio source failed', e); }
   }
   _disposeNode(id) {
     const n = this.nodes.get(id); if (!n) return;
