@@ -50,7 +50,7 @@ async function recordClip({ w, h, seconds, withAudio, paint }) {
 function remux(raw, name, seconds) {
   const tmp = join(dir, name + '.raw.webm'); writeFileSync(tmp, raw);
   const out = join(dir, name);
-  const r = spawnSync(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-i', tmp, '-t', String(seconds), '-c:v', 'libvpx', '-b:v', '600k', '-auto-alt-ref', '0', '-c:a', 'copy', out]);
+  const r = spawnSync(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-i', tmp, '-t', String(seconds), '-pix_fmt', 'yuv420p', '-c:v', 'libvpx', '-b:v', '600k', '-auto-alt-ref', '0', '-c:a', 'copy', out]); // yuv420p: drop the canvas alpha plane so frames decode fully opaque
   if (r.status !== 0) throw new Error('ffmpeg failed: ' + r.stderr);
   spawnSync('rm', ['-f', tmp]);
   console.log('wrote', out, raw.length, 'bytes');

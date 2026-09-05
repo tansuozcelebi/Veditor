@@ -5,6 +5,13 @@ const DRIFT_TOLERANCE = 0.2;   // seconds before a playing element is re-synced
 const SCRUB_TOLERANCE = 0.02;  // seconds when paused/scrubbing
 const PREROLL = 1.5;           // seconds ahead to pre-seek upcoming clips
 
+export function hexToRgba(hex, alpha = 1) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return `rgba(0,0,0,${alpha})`;
+  const v = parseInt(m[1], 16);
+  return `rgba(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255},${alpha})`;
+}
+
 class Emitter {
   constructor() { this._l = {}; }
   on(ev, fn) { (this._l[ev] ||= new Set()).add(fn); return () => this._l[ev].delete(fn); }
@@ -212,6 +219,23 @@ export class Player extends Emitter {
     return g;
   }
 
+  /**
+   * Transition bookkeeping for one frame: for every clip that is directly followed by a clip
+   * with a transition-in, the predecessor keeps running ("extended") for the transition duration
+   * so both can be blended. Returns { ext: Map<clipId, {until, next}>, fadeIn: Map<clipId, prev> }.
+   */
+  _transitionInfo() {
+    const ext = new Map(), fadeIn = new Map();
+    for (const c of this.store.project.clips) {
+      if (!c.transIn || c.transIn.type === 'none' || !(c.transIn.duration > 0)) continue;
+      const prev = this.store.adjacentPrev(c);
+      if (!prev) continue;
+      ext.set(prev.id, { until: c.start + c.transIn.duration, next: c });
+      fadeIn.set(c.id, prev);
+    }
+    return { ext, fadeIn };
+  }
+
   _syncElements(t) {
     const solo = this._soloActive();
     const now = this.audio ? this.audio.currentTime : 0;
@@ -219,27 +243,40 @@ export class Player extends Emitter {
       const tg = this._trackGain(track.id);
       if (tg) tg.gain.value = track.volume;
     }
+    const { ext, fadeIn } = this._transitionInfo();
     for (const clip of this.store.project.clips) {
       const n = this.nodes.get(clip.id);
       if (!n || !n.el || n.kind === 'image') continue;
       const el = n.el;
       const track = this.store.getTrack(clip.trackId);
       if (!track) continue;
-      const active = t >= clip.start && t < clip.start + clip.duration;
+      const end = clip.start + clip.duration;
+      const e = ext.get(clip.id);
+      const extended = e && t >= end && t < e.until;
+      const active = (t >= clip.start && t < end) || extended;
       const localT = clip.offset + (t - clip.start);
       if (active) {
-        const g = this._clipGain(clip, track, t, solo);
+        let g = this._clipGain(clip, track, extended ? end - 1e-6 : t, solo);
+        // audio cross-fade with the neighbouring clip during a transition
+        if (extended) g *= clamp(1 - (t - end) / (e.until - end), 0, 1);
+        const prev = fadeIn.get(clip.id);
+        if (prev && t < clip.start + clip.transIn.duration) g *= clamp((t - clip.start) / clip.transIn.duration, 0, 1);
         if (n.gain) n.gain.gain.setTargetAtTime(g, now, 0.005);
+        // a clip extended by a transition may run past the end of its media: hold the last frame instead of looping
+        const pastEnd = isFinite(el.duration) && localT >= el.duration - 0.01;
         if (this.playing) {
           if (el.paused) {
-            if (Math.abs(el.currentTime - localT) > SCRUB_TOLERANCE) el.currentTime = localT;
-            el.play().catch(() => { /* autoplay policy: will retry next frame */ });
-          } else if (Math.abs(el.currentTime - localT) > DRIFT_TOLERANCE) {
+            if (!pastEnd) {
+              if (Math.abs(el.currentTime - localT) > SCRUB_TOLERANCE) el.currentTime = localT;
+              el.play().catch(() => { /* autoplay policy: will retry next frame */ });
+            }
+          } else if (!pastEnd && Math.abs(el.currentTime - localT) > DRIFT_TOLERANCE) {
             el.currentTime = localT;
           }
         } else {
           if (!el.paused) el.pause();
-          if (Math.abs(el.currentTime - localT) > SCRUB_TOLERANCE && n.lastSeek !== localT) { n.lastSeek = localT; el.currentTime = localT; }
+          const target = pastEnd ? el.duration : localT;
+          if (Math.abs(el.currentTime - target) > SCRUB_TOLERANCE && n.lastSeek !== target) { n.lastSeek = target; el.currentTime = target; }
         }
       } else {
         if (!el.paused) el.pause();
@@ -252,7 +289,8 @@ export class Player extends Emitter {
     }
   }
 
-  /** Active visual clips ordered bottom→top (track order reversed). */
+  /** Active visual clips ordered bottom→top (track order reversed). A predecessor that is being
+   *  blended into the next clip by a transition is included just below it, flagged `extended`. */
   _visualClips(t) {
     const out = [];
     const tracks = this.store.project.tracks;
@@ -261,10 +299,52 @@ export class Player extends Emitter {
       if (tr.kind !== 'video' || tr.hidden) continue;
       for (const c of this.store.project.clips) {
         if (c.trackId !== tr.id) continue;
-        if (t >= c.start && t < c.start + c.duration) { out.push({ clip: c, track: tr }); break; }
+        if (t >= c.start && t < c.start + c.duration) {
+          const prev = this.store.adjacentPrev(c);
+          if (prev && c.transIn.type !== 'none' && c.transIn.duration > 0 && t < c.start + c.transIn.duration) out.push({ clip: prev, track: tr, extended: true });
+          out.push({ clip: c, track: tr, extended: false });
+          break;
+        }
       }
     }
     return out;
+  }
+
+  /** Visual effect of transitions at time t: { alpha, dx, dy (fractions of dest), scale, wipe, blur }. */
+  _transitionFx(clip, t) {
+    const fx = { alpha: 1, dx: 0, dy: 0, scale: 1, wipe: null, blur: 0 };
+    const apply = (tr, p, dir) => { // p: 0 = fully transitioned-out, 1 = fully shown; dir: +1 for in, -1 for out
+      switch (tr.type) {
+        case 'fade': fx.alpha *= p; break;
+        case 'slide-left': fx.dx += (1 - p) * dir; break;   // in: from the right; out: to the left
+        case 'slide-right': fx.dx -= (1 - p) * dir; break;
+        case 'slide-up': fx.dy += (1 - p) * dir; break;
+        case 'slide-down': fx.dy -= (1 - p) * dir; break;
+        case 'zoom': fx.scale *= 0.6 + 0.4 * p; fx.alpha *= p; break;
+        case 'wipe-left': fx.wipe = { from: dir > 0 ? 'right' : 'left', p }; break;
+        case 'wipe-right': fx.wipe = { from: dir > 0 ? 'left' : 'right', p }; break;
+        case 'blur': fx.blur += (1 - p) * 24; fx.alpha *= 0.3 + 0.7 * p; break;
+        default: break;
+      }
+    };
+    const tIn = clip.transIn, tOut = clip.transOut;
+    if (tIn && tIn.type !== 'none' && tIn.duration > 0 && t < clip.start + tIn.duration) apply(tIn, clamp((t - clip.start) / tIn.duration, 0, 1), 1);
+    const end = clip.start + clip.duration;
+    if (tOut && tOut.type !== 'none' && tOut.duration > 0 && t > end - tOut.duration) apply(tOut, clamp((end - t) / tOut.duration, 0, 1), -1);
+    return fx;
+  }
+
+  /** Apply transition geometry/clipping to the 2D context (must be inside save/restore). */
+  _applyFx(g, fx, dest) {
+    if (fx.wipe) {
+      g.beginPath();
+      const w = dest.w * fx.wipe.p;
+      if (fx.wipe.from === 'left') g.rect(dest.x, dest.y, w, dest.h); else g.rect(dest.x + dest.w - w, dest.y, w, dest.h);
+      g.clip();
+    }
+    if (fx.dx || fx.dy) g.translate(fx.dx * dest.w, fx.dy * dest.h);
+    if (fx.scale !== 1) { const cx = dest.x + dest.w / 2, cy = dest.y + dest.h / 2; g.translate(cx, cy); g.scale(fx.scale, fx.scale); g.translate(-cx, -cy); }
+    if (fx.blur > 0.5 && 'filter' in g) g.filter = `blur(${Math.round(fx.blur * (dest.w / 1920))}px)`;
   }
 
   render(t) {
@@ -281,18 +361,19 @@ export class Player extends Emitter {
       // top track first in grid
       visual.slice().reverse().forEach(({ clip, track }, i) => {
         const x = (i % cols) * cw, y = Math.floor(i / cols) * ch;
-        this._drawClip(clip, { x: x + 2, y: y + 2, w: cw - 4, h: ch - 4 }, true);
+        this._drawClip(clip, { x: x + 2, y: y + 2, w: cw - 4, h: ch - 4 }, true, t);
         g.fillStyle = 'rgba(0,0,0,.55)';
         g.fillRect(x + 8, y + 8, Math.min(cw - 16, 12 + track.name.length * 12), 26);
         g.fillStyle = '#fff'; g.font = `${Math.round(Math.min(cw, ch) * 0.05 + 8)}px sans-serif`; g.textBaseline = 'middle';
         g.fillText(track.name, x + 14, y + 21);
       });
     } else {
-      for (const { clip } of visual) this._drawClip(clip, { x: 0, y: 0, w: W, h: H }, false);
+      for (const { clip } of visual) this._drawClip(clip, { x: 0, y: 0, w: W, h: H }, false, t);
     }
   }
 
-  _drawClip(clip, dest, forceContain) {
+  _drawClip(clip, dest, forceContain, t = this.currentTime) {
+    if (clip.kind === 'text') { this._drawText(clip, dest, forceContain, t); return; }
     const n = this.nodes.get(clip.id);
     if (!n || !n.el) return;
     const el = n.el;
@@ -314,10 +395,70 @@ export class Player extends Emitter {
     const cx = dest.x + dest.w / 2 + (ox / 100) * dest.w;
     const cy = dest.y + dest.h / 2 + (oy / 100) * dest.h;
     const g = this.ctx2d;
+    const fx = this._transitionFx(clip, t);
     g.save();
-    g.globalAlpha = clamp(clip.opacity, 0, 1);
-    if (forceContain || fit === 'cover' || scale > 1) { g.beginPath(); g.rect(dest.x, dest.y, dest.w, dest.h); g.clip(); }
+    g.globalAlpha = clamp(clip.opacity * fx.alpha, 0, 1);
+    if (forceContain || fit === 'cover' || scale > 1 || fx.dx || fx.dy || fx.scale !== 1) { g.beginPath(); g.rect(dest.x, dest.y, dest.w, dest.h); g.clip(); }
+    this._applyFx(g, fx, dest);
     try { g.drawImage(el, cx - dw / 2, cy - dh / 2, dw, dh); } catch { /* frame not ready */ }
+    g.restore();
+  }
+
+  /** Word-wrap text to a maximum pixel width using the current context font. */
+  _wrapText(g, text, maxWidth) {
+    const lines = [];
+    for (const para of String(text).split(/\r?\n/)) {
+      const words = para.split(/\s+/).filter(Boolean);
+      if (!words.length) { lines.push(''); continue; }
+      let line = words[0];
+      for (let i = 1; i < words.length; i++) {
+        const test = line + ' ' + words[i];
+        if (g.measureText(test).width <= maxWidth) line = test; else { lines.push(line); line = words[i]; }
+      }
+      lines.push(line);
+    }
+    return lines;
+  }
+
+  /** Render a text layer clip with optional background box, outline, shadow and transitions. */
+  _drawText(clip, dest, forceContain, t) {
+    const g = this.ctx2d;
+    const text = clip.text || '';
+    if (!text.trim()) return;
+    const fx = this._transitionFx(clip, t);
+    const scale = forceContain ? 1 : clip.scale, ox = forceContain ? 0 : clip.x, oy = forceContain ? 0 : clip.y;
+    const fontPx = Math.max(4, dest.h * (clip.fontSize / 100) * scale);
+    g.save();
+    g.globalAlpha = clamp(clip.opacity * fx.alpha, 0, 1);
+    g.beginPath(); g.rect(dest.x, dest.y, dest.w, dest.h); g.clip();
+    this._applyFx(g, fx, dest);
+    g.font = `${clip.italic ? 'italic ' : ''}${clip.bold ? 'bold ' : ''}${fontPx}px "${clip.fontFamily || 'Arial'}", sans-serif`;
+    g.textBaseline = 'middle';
+    const lines = this._wrapText(g, text, dest.w * 0.9);
+    const lh = fontPx * (clip.lineHeight || 1.2);
+    const blockH = lines.length * lh;
+    const blockW = Math.max(...lines.map((l) => g.measureText(l).width), 1);
+    const cx = dest.x + dest.w / 2 + (ox / 100) * dest.w;
+    const cy = dest.y + dest.h / 2 + (oy / 100) * dest.h;
+    const align = clip.align || 'center';
+    const left = cx - blockW / 2;
+    if (clip.bgEnabled) {
+      const pad = fontPx * 0.35;
+      g.fillStyle = hexToRgba(clip.bgColor || '#000000', clip.bgOpacity ?? 0.6);
+      g.fillRect(left - pad, cy - blockH / 2 - pad * 0.6, blockW + pad * 2, blockH + pad * 1.2);
+    }
+    if (clip.shadow) { g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = fontPx * 0.15; g.shadowOffsetX = fontPx * 0.04; g.shadowOffsetY = fontPx * 0.04; }
+    g.textAlign = align;
+    const ax = align === 'left' ? left : align === 'right' ? left + blockW : cx;
+    lines.forEach((line, i) => {
+      const y = cy - blockH / 2 + lh * (i + 0.5);
+      if (clip.outlineWidth > 0) {
+        g.lineJoin = 'round'; g.lineWidth = fontPx * (clip.outlineWidth / 100) * 2; g.strokeStyle = clip.outlineColor || '#000';
+        g.strokeText(line, ax, y);
+      }
+      g.fillStyle = clip.color || '#fff';
+      g.fillText(line, ax, y);
+    });
     g.restore();
   }
 

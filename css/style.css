@@ -161,6 +161,12 @@ h2 { font-size: 14px; margin: 0; font-weight: 600; }
 .clip.video { background: #1e3a6b; }
 .clip.image { background: #5a3d0c; }
 .clip.audio { background: #144d2b; }
+.clip.text { background: linear-gradient(180deg, #5b2d8e, #3f1f66); }
+.clip.text .clip-label { font-family: Georgia, serif; font-size: 12px; }
+.clip .trans { position: absolute; top: 0; bottom: 0; display: flex; align-items: flex-end; justify-content: center; font-size: 12px; color: #fff; pointer-events: none; background: rgba(255,255,255,.18); border-bottom: 2px solid #fbbf24; }
+.clip .trans.in { left: 0; border-right: 1px dashed rgba(255,255,255,.5); }
+.clip .trans.out { right: 0; border-left: 1px dashed rgba(255,255,255,.5); }
+.field textarea { background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; width: 100%; min-height: 64px; resize: vertical; font: inherit; }
 .clip.selected { border-color: #fff; box-shadow: 0 0 0 1px #fff inset; z-index: 2; }
 .clip.dragging { opacity: .85; cursor: grabbing; z-index: 3; }
 .clip.muted .clip-label::after { content: " 🔇"; }

@@ -171,7 +171,7 @@ export class Timeline {
   _makeClipEl(c) {
     const el = document.createElement('div');
     el.dataset.clipId = c.id;
-    el.innerHTML = `<div class="thumbs"></div><canvas class="wave"></canvas><div class="fade in"></div><div class="fade out"></div><div class="clip-label"></div><div class="handle l"></div><div class="handle r"></div>`;
+    el.innerHTML = `<div class="thumbs"></div><canvas class="wave"></canvas><div class="fade in"></div><div class="fade out"></div><div class="trans in" title="">⟋</div><div class="trans out" title="">⟍</div><div class="clip-label"></div><div class="handle l"></div><div class="handle r"></div>`;
     el.addEventListener('pointerdown', (e) => this._clipPointerDown(e, c.id));
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -183,18 +183,26 @@ export class Timeline {
   _updateClipEl(el, c) {
     const m = this.store.media.get(c.mediaId);
     const track = this.store.getTrack(c.trackId);
-    const kind = m ? m.kind : 'video';
+    const isText = c.kind === 'text';
+    const kind = isText ? 'text' : (m ? m.kind : 'video');
     const visualKind = track && track.kind === 'audio' ? 'audio' : kind;
     el.className = `clip ${visualKind}${c.muted ? ' muted' : ''}`;
     el.style.left = this.timeToX(c.start) + 'px';
     el.style.width = Math.max(2, this.timeToX(c.duration)) + 'px';
-    el.querySelector('.clip-label').textContent = c.name || (m ? m.name : '?');
+    el.querySelector('.clip-label').textContent = isText ? 'T  ' + (c.text || '').split('\n')[0] : (c.name || (m ? m.name : '?'));
     el.querySelector('.fade.in').style.width = this.timeToX(c.fadeIn) + 'px';
     el.querySelector('.fade.out').style.width = this.timeToX(c.fadeOut) + 'px';
+    const tIn = el.querySelector('.trans.in'), tOut = el.querySelector('.trans.out');
+    const showT = track && track.kind === 'video';
+    tIn.hidden = !(showT && c.transIn && c.transIn.type !== 'none');
+    tOut.hidden = !(showT && c.transOut && c.transOut.type !== 'none');
+    if (!tIn.hidden) { tIn.style.width = Math.max(10, this.timeToX(c.transIn.duration)) + 'px'; tIn.title = t('trans.' + c.transIn.type) + ' · ' + c.transIn.duration + ' s'; }
+    if (!tOut.hidden) { tOut.style.width = Math.max(10, this.timeToX(c.transOut.duration)) + 'px'; tOut.title = t('trans.' + c.transOut.type) + ' · ' + c.transOut.duration + ' s'; }
     this._renderClipContent(el, c, m, track);
   }
   _renderClipContent(el, c, m, track) {
-    if (!m || !track) return;
+    if (!track) return;
+    if (!m) { el.querySelector('.thumbs').hidden = true; el.querySelector('.wave').hidden = true; return; }
     const w = Math.max(2, this.timeToX(c.duration));
     const thumbsEl = el.querySelector('.thumbs'), wave = el.querySelector('.wave');
     const showThumbs = track.kind === 'video' && (m.kind === 'video' || m.kind === 'image');
@@ -384,9 +392,9 @@ export class Timeline {
         }
         start = Math.max(0, start);
       }
-      const media = store.media.get(clip.mediaId);
+      const kind = store.clipKind(clip);
       let target = this.trackFromClientY(ev.clientY);
-      if (!target || target.locked || !media || !store.canPlaceKind(media.kind, target.kind)) target = store.getTrack(o.trackId);
+      if (!target || target.locked || !kind || !store.canPlaceKind(kind, target.kind)) target = store.getTrack(o.trackId);
       let pos = store.findPlacement(target.id, start, o.duration, [clip.id]);
       if (target.id !== o.trackId && (pos == null || Math.abs(pos - start) > Math.max(0.5, o.duration))) {
         target = store.getTrack(o.trackId);

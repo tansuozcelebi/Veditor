@@ -169,6 +169,47 @@ try {
   });
   check('project JSON round trip', roundtrip.before === roundtrip.after && roundtrip.media === 5, JSON.stringify(roundtrip));
 
+  // ---- text layer ----
+  const txt = await page.evaluate(async () => {
+    const { store, player, addTextClip } = window.veditor;
+    player.pause(); player.seek(0.5);
+    const c = addTextClip(0.5, 'VEDITOR TEST');
+    store.updateClip(c.id, { bgEnabled: true, bgColor: '#ff0000', bgOpacity: 1, color: '#ffffff', fontSize: 12, x: 0, y: 30, transIn: { type: 'none', duration: 0.4 } });
+    player.seek(1.5);
+    await new Promise((r) => setTimeout(r, 300));
+    const g = player.canvas.getContext('2d'); const W = player.canvas.width, H = player.canvas.height;
+    // the box is centred at (50%, 80%) and padded around a 12%-high line: sample inside the box just above the glyphs
+    const box = g.getImageData(Math.round(W * 0.5), Math.round(H * 0.8 - H * 0.12 * 0.75), 1, 1).data;
+    const el = document.querySelector(`.clip[data-clip-id="${c.id}"]`);
+    return { kind: c.kind, track: store.getTrack(c.trackId).kind, duration: c.duration, box: [...box], label: el && el.querySelector('.clip-label').textContent, cls: el && el.className };
+  });
+  check('text layer placed on a video track', txt.kind === 'text' && txt.track === 'video' && txt.duration === 5 && /VEDITOR TEST/.test(txt.label) && /\btext\b/.test(txt.cls), JSON.stringify({ ...txt, box: undefined }));
+  check('text layer renders its background box', txt.box[0] > 180 && txt.box[1] < 90 && txt.box[2] < 90, `rgb=${txt.box.slice(0, 3)}`);
+
+  // ---- transitions: cross dissolve between the two halves of clip A, fade-in on clip B ----
+  const trans = await page.evaluate(async ({ b, v1 }) => {
+    const { store, player } = window.veditor;
+    const parts = store.clipsOnTrack(v1).filter((c) => c.kind !== 'text');
+    const a2 = parts[1]; // starts at 2.0 right after the first half
+    store.updateClip(a2.id, { transIn: { type: 'fade', duration: 1 } });
+    const bc = store.getClip(b);
+    store.updateClip(b, { transIn: { type: 'fade', duration: 1 }, scale: 1, x: 0, y: 0 });
+    const vis = player._visualClips(a2.start + 0.5).map((v) => ({ name: v.clip.name, ext: v.extended }));
+    const fx0 = player._transitionFx(bc, bc.start + 0.1), fx1 = player._transitionFx(bc, bc.start + 0.9), fxN = player._transitionFx(bc, bc.start + 2);
+    // element of the extended predecessor must be considered active during the blend
+    player.seek(a2.start + 0.5); player._syncElements(a2.start + 0.5);
+    const prevNode = player.nodes.get(parts[0].id);
+    const g = player.canvas.getContext('2d'); const W = player.canvas.width, H = player.canvas.height;
+    player.seek(bc.start + 0.1); await new Promise((r) => setTimeout(r, 350)); player.render(bc.start + 0.1);
+    const early = g.getImageData(Math.round(W * 0.5), Math.round(H * 0.5), 1, 1).data;
+    player.seek(bc.start + 0.95); await new Promise((r) => setTimeout(r, 350)); player.render(bc.start + 0.95);
+    const late = g.getImageData(Math.round(W * 0.5), Math.round(H * 0.5), 1, 1).data;
+    return { vis, fx0: fx0.alpha, fx1: fx1.alpha, fxN: fxN.alpha, prevGain: prevNode && prevNode.gain ? prevNode.gain.gain.value : null, early: [...early], late: [...late] };
+  }, placed);
+  check('cross dissolve keeps the previous clip drawn (extended) during the blend', trans.vis.length >= 2 && trans.vis[0].ext === true && trans.vis[1].ext === false && trans.vis.slice(2).every((v) => !v.ext), JSON.stringify(trans.vis));
+  check('fade transition ramps alpha 0→1 over its duration', approx(trans.fx0, 0.1, 0.02) && approx(trans.fx1, 0.9, 0.02) && trans.fxN === 1, `alpha=${trans.fx0},${trans.fx1},${trans.fxN}`);
+  check('fading-in clip blends over the layer below', trans.early[2] > trans.late[2] + 40 && trans.late[1] > trans.early[1] + 40, `early=${trans.early.slice(0, 3)} late=${trans.late.slice(0, 3)}`);
+
   const layout = await page.evaluate(() => ({ docW: document.documentElement.scrollWidth, vw: window.innerWidth, inspector: document.getElementById('inspectorPanel').getBoundingClientRect().right, lang: document.documentElement.lang, title: document.getElementById('inspectorTitle').textContent }));
   check('layout fits the viewport (inspector visible, no horizontal overflow)', layout.docW <= layout.vw && layout.inspector <= layout.vw && layout.inspector > layout.vw - 320, JSON.stringify(layout));
   check('Turkish locale picks Turkish UI', layout.lang === 'tr' && /Özellikler|Klip|Kanal|Proje/.test(layout.title), layout.title);

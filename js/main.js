@@ -1,6 +1,6 @@
 // ===================== Veditor – application bootstrap =====================
 import { t, setLang, getLang, applyStatic } from './i18n.js';
-import { Store, formatTime, uid } from './state.js';
+import { Store, formatTime, uid, TEXT_DEFAULT_DURATION } from './state.js';
 import { Player } from './player.js';
 import { Timeline } from './timeline.js';
 import { Exporter } from './exporter.js';
@@ -63,6 +63,25 @@ function addMediaToTimeline(mediaId, { trackId = null, time = null, quiet = fals
   return clip;
 }
 
+/** Add a text layer at the playhead on the top-most free video track (creating one if needed). */
+function addTextClip(time = player.currentTime, text = t('text.default')) {
+  const dur = TEXT_DEFAULT_DURATION;
+  let track = store.project.tracks.find((tr) => tr.kind === 'video' && !tr.locked && store.isFree(tr.id, time, dur));
+  if (!track) track = store.addTrack('video');
+  const clip = store.addClip({ kind: 'text', trackId: track.id, name: text.split('\n')[0], text, start: Math.max(0, time), duration: dur, transIn: { type: 'fade', duration: 0.4 }, transOut: { type: 'fade', duration: 0.4 } });
+  store.selectClips([clip.id]);
+  toast(t('text.added'), 'success');
+  return clip;
+}
+/** Apply a 0.5 s cross dissolve to the selected clips (transition-in on each; the predecessor is blended automatically). */
+function crossfadeSelected() {
+  const clips = store.selectedClips().filter((c) => store.getTrack(c.trackId)?.kind === 'video');
+  if (!clips.length) return;
+  store.pushHistory();
+  for (const c of clips) store.updateClip(c.id, { transIn: { type: 'fade', duration: Math.min(0.5, c.duration / 2) } }, { silent: true });
+  store.changed('transition');
+  toast(t('trans.applied'), 'success');
+}
 function splitSelected() {
   const clips = store.selectedClips();
   const tm = player.currentTime;
@@ -102,7 +121,8 @@ function clipContextMenu(clipId, x, y) {
   showContextMenu([
     { label: '✂ ' + t('menu.split'), onClick: () => splitSelected() },
     { label: '⧉ ' + t('menu.duplicate'), onClick: () => duplicateSelected() },
-    { label: '🎵 ' + t('menu.detach'), onClick: () => detachAudioSelected() },
+    ...(c.kind !== 'text' ? [{ label: '🎵 ' + t('menu.detach'), onClick: () => detachAudioSelected() }] : []),
+    { label: '⟋ ' + t('menu.crossfade'), onClick: () => crossfadeSelected() },
     { label: (c.muted ? '🔊 ' + t('menu.unmute') : '🔇 ' + t('menu.mute')), onClick: () => store.updateClip(c.id, { muted: !c.muted }) },
     { label: '🔍 ' + t('menu.selectMedia'), onClick: () => library.select(c.mediaId) },
     '-',
@@ -142,6 +162,7 @@ $('btnDuplicate').onclick = duplicateSelected;
 $('btnDetachAudio').onclick = detachAudioSelected;
 $('btnAddVideoTrack').onclick = () => { const tr = store.addTrack('video'); store.selectTrack(tr.id); };
 $('btnAddAudioTrack').onclick = () => { const tr = store.addTrack('audio'); store.selectTrack(tr.id); };
+$('btnAddText').onclick = () => addTextClip();
 $('snapToggle').onchange = (e) => { timeline.snap = e.target.checked; };
 $('zoomSlider').oninput = (e) => timeline.setZoomSlider(Number(e.target.value));
 $('btnZoomIn').onclick = () => timeline.zoomBy(1.3, player.currentTime);
@@ -151,7 +172,8 @@ function refreshHistoryBtns() { $('btnUndo').disabled = !store.canUndo(); $('btn
 store.on('history', refreshHistoryBtns); refreshHistoryBtns();
 function refreshSelectionBtns() {
   const n = store.selection.clipIds.size;
-  $('btnDelete').disabled = n === 0; $('btnDuplicate').disabled = n === 0; $('btnDetachAudio').disabled = n !== 1;
+  $('btnDelete').disabled = n === 0; $('btnDuplicate').disabled = n === 0;
+  $('btnDetachAudio').disabled = n !== 1 || store.selectedClips()[0]?.kind === 'text';
 }
 store.on('selection', refreshSelectionBtns); refreshSelectionBtns();
 
@@ -189,6 +211,7 @@ document.addEventListener('keydown', (e) => {
   else if (ctrl && e.key.toLowerCase() === 'e') { e.preventDefault(); openExportDialog(store, player, exporter); }
   else if (ctrl && e.key.toLowerCase() === 'a') { e.preventDefault(); store.selectClips(store.project.clips.map((c) => c.id)); }
   else if (e.key === 's' || e.key === 'S') { e.preventDefault(); splitSelected(); }
+  else if (e.key === 't' || e.key === 'T') { e.preventDefault(); addTextClip(); }
   else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); e.shiftKey ? player.seek(player.currentTime - 1) : player.stepFrame(-1); }
   else if (e.key === 'ArrowRight') { e.preventDefault(); e.shiftKey ? player.seek(player.currentTime + 1) : player.stepFrame(1); }
@@ -214,4 +237,4 @@ $('zoomSlider').value = timeline.zoomSliderValue();
 player.render(0);
 
 // expose for debugging / tests
-window.veditor = { store, player, timeline, exporter, library, addMediaToTimeline, splitSelected, deleteSelected, detachAudioSelected, uid };
+window.veditor = { store, player, timeline, exporter, library, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid };

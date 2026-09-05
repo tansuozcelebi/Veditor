@@ -6,8 +6,9 @@ seslendirme kaydeder ve sonucu tek bir video dosyası olarak dışa aktarır.
 
 > English summary: Veditor is a dependency-free, browser-based multi-track video editor. It composites several
 > video layers (full-frame or picture-in-picture), mixes multiple audio tracks with volume/fades, records
-> voice-overs from the microphone, and exports the result via `MediaRecorder` (WebM VP9/VP8 + Opus, or MP4 where
-> the browser supports it). No upload – your media never leaves the machine.
+> voice-overs from the microphone, adds text layers and clip transitions (dissolve, slide, zoom, wipe, blur), and
+> exports the result via `MediaRecorder` (WebM VP9/VP8 + Opus, or MP4 where the browser supports it). No upload – your
+> media never leaves the machine.
 
 ![Veditor screenshot](docs/screenshot.png)
 
@@ -20,6 +21,8 @@ seslendirme kaydeder ve sonucu tek bir video dosyası olarak dışa aktarır.
 | **Düzenleme** | Sürükleyerek taşıma (kanallar arası dahil), uçlardan kırpma, oynatma kafasında bölme (**S**), çoğaltma, silme, yapışma (snap), çakışma engelleme, geri al / yeniden yap (100 adım). |
 | **Ses ekleme** | Ses dosyası ekleme, **mikrofonla seslendirme kaydı** (zaman çizelgesi oynatılırken), video klibin **sesini ayrı kanala kopyalama**, klip ve kanal bazında ses seviyesi, sessiz, solo, fade-in / fade-out. |
 | **Görüntü** | Klip başına opaklık, sığdırma modu (sığdır/kapla/esnet), ölçek ve konum; hazır **PiP** (resim içinde resim) ve yarım ekran yerleşimleri. |
+| **Geçiş efektleri** | Klip başına giriş/çıkış geçişi: çapraz erime (solma), sola/sağa/yukarı/aşağı kaydırma, yakınlaşma, sola/sağa silme, bulanıklık. Bitişik bir önceki klip varsa geçiş iki klibi harmanlar (önceki klip geçiş süresince uzatılır, sesler çapraz geçer); yoksa klip alttaki katmandan belirir. |
+| **Yazı katmanı** | Video kanallarına yazı klipleri (**T** tuşu veya "Yazı Ekle"): çok satırlı metin, yazı tipi, boyut, renk, kalın/italik, hizalama, arka plan kutusu, kontur, gölge, satır aralığı; konum/ölçek/opaklık ve geçişler tüm kliplerde olduğu gibi çalışır. |
 | **Dışa aktarma** | WebM (VP9/VP8 + Opus) ya da tarayıcı destekliyorsa MP4 (H.264 + AAC); yalnızca ses (Opus / AAC). Çözünürlük (1080p, 720p, 4K, dikey, kare, özel), kare hızı, bit hızı seçimi, ilerleme çubuğu, önizleme ve indirme. WebM çıktısına süre bilgisi otomatik eklenir. |
 | **Proje** | Proje ayarları (çözünürlük, FPS, arka plan), proje dosyasını JSON olarak kaydetme / açma (medya dosyaları yeniden eşleştirilir), TR / EN arayüz. |
 
@@ -53,6 +56,7 @@ Firefox'ta dışa aktarma WebM ile sınırlıdır, Safari'de MediaRecorder deste
 | --- | --- |
 | `Space` | Oynat / Duraklat |
 | `S` | Seçili klibi (yoksa oynatma kafası altındaki klipleri) böl |
+| `T` | Oynatma kafasına yazı katmanı ekle |
 | `Delete` / `Backspace` | Seçili klipleri sil |
 | `Ctrl+Z` / `Ctrl+Y` | Geri al / Yeniden yap |
 | `Ctrl+D` | Çoğalt |
@@ -73,7 +77,7 @@ js/main.js            Başlatma, düğme/kısayol bağlantıları, düzenleme ko
 js/state.js           Proje modeli (kanallar, klipler), seçim, geri al / yeniden yap, yerleşim/çakışma mantığı
 js/media.js           İçe aktarma, metadata, küçük resimler, dalga formu (8 kHz OfflineAudioContext ile bellek dostu)
 js/player.js          Oynatma motoru: AudioContext saati, klip başına <video>/<audio> öğeleri, Web Audio miks grafı,
-                      Canvas kompozit (katman / ızgara), PiP dönüşümleri, fade'ler
+                      Canvas kompozit (katman / ızgara), PiP dönüşümleri, fade'ler, geçiş efektleri, yazı katmanı çizimi
 js/timeline.js        Zaman çizelgesi: cetvel, kanal başlıkları, klip sürükleme/kırpma/yapışma, sürükle-bırak
 js/exporter.js        MediaRecorder tabanlı dışa aktarma (canvas.captureStream + MediaStreamDestination)
 js/webm-fix.js        MediaRecorder WebM çıktısına Duration alanı ekleyen EBML yamalayıcı
@@ -103,7 +107,7 @@ ffmpeg ile (akışlar, süre, çözülebilirlik) kontrol eder. Çıktılar `test
 - Dışa aktarma gerçek zamanlıdır (MediaRecorder); arka plandaki sekmelerde kare üretimi durur.
 - MP4 çıktısı yalnızca tarayıcı `MediaRecorder` ile `video/mp4` destekliyorsa listelenir (Chrome 126+ birçok platformda destekler).
 - Proje dosyası medya içermez; açarken dosyalar ada göre yeniden eşleştirilir.
-- Hız değiştirme, geçiş efektleri ve yazı katmanı bu sürümde yoktur.
+- Hız değiştirme (yavaş/hızlı çekim) bu sürümde yoktur.
 
 ## Lisans
 
