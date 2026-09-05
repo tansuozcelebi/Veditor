@@ -3,18 +3,25 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { chromium } from 'playwright';
 
 const dir = new URL('./fixtures/', import.meta.url).pathname;
-mkdirSync(dir, { recursive: true });
 
-function findFfmpeg() {
-  const root = process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/pw-browsers';
-  if (existsSync(root)) for (const d of readdirSync(root)) if (d.startsWith('ffmpeg')) { const p = join(root, d, 'ffmpeg-linux'); if (existsSync(p)) return p; }
+export function findFfmpeg() {
+  const roots = [process.env.PLAYWRIGHT_BROWSERS_PATH, '/opt/pw-browsers', join(homedir(), '.cache/ms-playwright'), join(homedir(), 'Library/Caches/ms-playwright'), join(process.env.LOCALAPPDATA || '', 'ms-playwright')].filter(Boolean);
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    for (const d of readdirSync(root)) if (d.startsWith('ffmpeg')) for (const bin of ['ffmpeg-linux', 'ffmpeg-mac', 'ffmpeg-mac-arm64', 'ffmpeg-win64.exe']) { const p = join(root, d, bin); if (existsSync(p)) return p; }
+  }
   return 'ffmpeg';
 }
 const ffmpeg = findFfmpeg();
+// Only generate when executed directly (the smoke test imports findFfmpeg from this module).
+const isMain = !!process.argv[1] && new URL(import.meta.url).pathname === process.argv[1].replace(/\\/g, '/');
 
+if (isMain) {
+mkdirSync(dir, { recursive: true });
 const browser = await chromium.launch({ channel: 'chromium', args: ['--autoplay-policy=no-user-gesture-required'] });
 const page = await browser.newPage();
 await page.goto('about:blank');
@@ -50,7 +57,7 @@ async function recordClip({ w, h, seconds, withAudio, paint }) {
 function remux(raw, name, seconds) {
   const tmp = join(dir, name + '.raw.webm'); writeFileSync(tmp, raw);
   const out = join(dir, name);
-  const r = spawnSync(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-i', tmp, '-t', String(seconds), '-c:v', 'libvpx', '-b:v', '600k', '-auto-alt-ref', '0', '-c:a', 'copy', out]);
+  const r = spawnSync(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-i', tmp, '-t', String(seconds), '-pix_fmt', 'yuv420p', '-c:v', 'libvpx', '-b:v', '600k', '-auto-alt-ref', '0', '-c:a', 'copy', out]); // yuv420p: drop the canvas alpha plane so frames decode fully opaque
   if (r.status !== 0) throw new Error('ffmpeg failed: ' + r.stderr);
   spawnSync('rm', ['-f', tmp]);
   console.log('wrote', out, raw.length, 'bytes');
@@ -91,4 +98,5 @@ await browser.close();
   header.writeUInt32LE(rate * ch * 2, 28); header.writeUInt16LE(ch * 2, 32); header.writeUInt16LE(16, 34); header.write('data', 36); header.writeUInt32LE(data.length, 40);
   writeFileSync(join(dir, 'tone.wav'), Buffer.concat([header, data]));
   console.log('wrote tone.wav');
+}
 }

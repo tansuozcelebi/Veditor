@@ -1,6 +1,6 @@
 // ===================== UI: library, inspector, dialogs, toasts, context menu =====================
 import { t, applyStatic } from './i18n.js';
-import { RESOLUTIONS, formatTime, formatDurationShort, formatBytes, clamp } from './state.js';
+import { RESOLUTIONS, TRANSITION_TYPES, FONT_FAMILIES, formatTime, formatDurationShort, formatBytes, clamp } from './state.js';
 import { supportedFormats } from './exporter.js';
 import { importFiles } from './media.js';
 
@@ -162,7 +162,7 @@ export class Inspector {
     if (inputEl.type === 'range') {
       const row = document.createElement('div'); row.className = 'row';
       const val = document.createElement('span'); val.className = 'val';
-      const upd = () => { val.textContent = (unit === '%' ? Math.round(inputEl.value * 100) + '%' : Number(inputEl.value).toFixed(2) + (unit || '')); };
+      const upd = () => { val.textContent = unit === '%' ? Math.round(inputEl.value * 100) + '%' : unit === 'pct' ? Number(inputEl.value).toFixed(1) + '%' : Number(inputEl.value).toFixed(2) + (unit || ''); };
       inputEl.addEventListener('input', upd); upd();
       row.append(inputEl, val); f.appendChild(row);
     } else f.appendChild(inputEl);
@@ -183,17 +183,57 @@ export class Inspector {
   }
   _section(body, title) { const s = document.createElement('div'); s.className = 'section-title'; s.textContent = title; body.appendChild(s); }
 
+  _select(value, options, onChange) {
+    const sel = document.createElement('select');
+    for (const [v, label] of options) { const o = document.createElement('option'); o.value = v; o.textContent = label; if (String(value) === String(v)) o.selected = true; sel.appendChild(o); }
+    sel.addEventListener('change', () => onChange(sel.value));
+    return sel;
+  }
+  _toggle(label, on, onClick) { const b = document.createElement('button'); b.className = 'btn small' + (on ? ' on' : ''); b.textContent = label; b.onclick = onClick; return b; }
+
   _renderClip(c, body) {
     const { store } = this;
     const m = store.media.get(c.mediaId); const track = store.getTrack(c.trackId);
+    const isText = c.kind === 'text';
     const upd = (patch, { silent = false } = {}) => store.updateClip(c.id, patch, { silent, history: !silent });
-    // name
-    const name = document.createElement('input'); name.type = 'text'; name.value = c.name || (m ? m.name : '');
-    name.addEventListener('change', () => upd({ name: name.value }));
-    body.appendChild(this._field(t('inspector.name'), name));
-    const info = document.createElement('p'); info.className = 'hint';
-    info.textContent = `${t('inspector.media')}: ${m ? m.name : '?'} · ${t('inspector.track')}: ${track ? track.name : '?'}`;
-    body.appendChild(info);
+    if (isText) {
+      this._section(body, t('text.section'));
+      const ta = document.createElement('textarea'); ta.value = c.text || '';
+      ta.addEventListener('change', () => upd({ text: ta.value, name: ta.value.split('\n')[0] }));
+      body.appendChild(this._field(t('text.content'), ta));
+      body.appendChild(this._field(t('text.font'), this._select(c.fontFamily, FONT_FAMILIES.map((f) => [f, f]), (v) => upd({ fontFamily: v }))));
+      body.appendChild(this._field(t('text.size'), this._range(c.fontSize, { min: 1, max: 40, step: 0.5, onInput: (v) => upd({ fontSize: v }, { silent: true }) }), { unit: 'pct' }));
+      const cg = document.createElement('div'); cg.className = 'field-grid';
+      const col = document.createElement('input'); col.type = 'color'; col.value = c.color; col.addEventListener('change', () => upd({ color: col.value }));
+      cg.appendChild(this._field(t('text.color'), col));
+      cg.appendChild(this._field(t('text.align'), this._select(c.align, [['left', t('text.alignLeft')], ['center', t('text.alignCenter')], ['right', t('text.alignRight')]], (v) => upd({ align: v }))));
+      body.appendChild(cg);
+      const row = document.createElement('div'); row.className = 'toggle-row';
+      row.appendChild(this._toggle('B ' + t('text.bold'), c.bold, () => upd({ bold: !c.bold })));
+      row.appendChild(this._toggle('I ' + t('text.italic'), c.italic, () => upd({ italic: !c.italic })));
+      row.appendChild(this._toggle('▦ ' + t('text.bg'), c.bgEnabled, () => upd({ bgEnabled: !c.bgEnabled })));
+      row.appendChild(this._toggle('◗ ' + t('text.shadow'), c.shadow, () => upd({ shadow: !c.shadow })));
+      body.appendChild(row);
+      const bg = document.createElement('div'); bg.className = 'field-grid';
+      const bgc = document.createElement('input'); bgc.type = 'color'; bgc.value = c.bgColor; bgc.addEventListener('change', () => upd({ bgColor: bgc.value }));
+      bg.appendChild(this._field(t('text.bgColor'), bgc));
+      bg.appendChild(this._field(t('text.bgOpacity'), this._range(c.bgOpacity, { min: 0, max: 1, step: 0.01, onInput: (v) => upd({ bgOpacity: v }, { silent: true }) }), { unit: '%' }));
+      body.appendChild(bg);
+      const og = document.createElement('div'); og.className = 'field-grid';
+      const oc = document.createElement('input'); oc.type = 'color'; oc.value = c.outlineColor; oc.addEventListener('change', () => upd({ outlineColor: oc.value }));
+      og.appendChild(this._field(t('text.outlineColor'), oc));
+      og.appendChild(this._field(t('text.outline'), this._range(c.outlineWidth, { min: 0, max: 20, step: 0.5, onInput: (v) => upd({ outlineWidth: v }, { silent: true }) }), { unit: 'pct' }));
+      body.appendChild(og);
+      body.appendChild(this._field(t('text.lineHeight'), this._range(c.lineHeight, { min: 0.8, max: 2.5, step: 0.05, onInput: (v) => upd({ lineHeight: v }, { silent: true }) }), { unit: '×' }));
+    } else {
+      // name
+      const name = document.createElement('input'); name.type = 'text'; name.value = c.name || (m ? m.name : '');
+      name.addEventListener('change', () => upd({ name: name.value }));
+      body.appendChild(this._field(t('inspector.name'), name));
+      const info = document.createElement('p'); info.className = 'hint';
+      info.textContent = `${t('inspector.media')}: ${m ? m.name : '?'} · ${t('inspector.track')}: ${track ? track.name : '?'}`;
+      body.appendChild(info);
+    }
     // timing
     this._section(body, t('inspector.timingSection'));
     const grid = document.createElement('div'); grid.className = 'field-grid';
@@ -238,6 +278,16 @@ export class Inspector {
       const row = document.createElement('div'); row.className = 'toggle-row';
       for (const [k, p] of presets) { const b = document.createElement('button'); b.className = 'btn small'; b.textContent = t(k); b.onclick = () => upd({ ...p, fit: 'contain' }); row.appendChild(b); }
       pr.appendChild(row); body.appendChild(pr);
+      // transitions
+      this._section(body, t('trans.section'));
+      const types = TRANSITION_TYPES.map((k) => [k, t('trans.' + k)]);
+      const tg = document.createElement('div'); tg.className = 'field-grid';
+      tg.appendChild(this._field(t('trans.in'), this._select(c.transIn.type, types, (v) => upd({ transIn: { ...c.transIn, type: v } }))));
+      tg.appendChild(this._field(t('trans.duration'), this._num(c.transIn.duration, { min: 0.1, max: Math.max(0.1, c.duration), step: 0.1, onChange: (v) => upd({ transIn: { ...c.transIn, duration: clamp(v, 0.1, c.duration) } }) })));
+      tg.appendChild(this._field(t('trans.out'), this._select(c.transOut.type, types, (v) => upd({ transOut: { ...c.transOut, type: v } }))));
+      tg.appendChild(this._field(t('trans.duration'), this._num(c.transOut.duration, { min: 0.1, max: Math.max(0.1, c.duration), step: 0.1, onChange: (v) => upd({ transOut: { ...c.transOut, duration: clamp(v, 0.1, c.duration) } }) })));
+      body.appendChild(tg);
+      const th = document.createElement('p'); th.className = 'hint'; th.textContent = t('trans.hint'); body.appendChild(th);
     }
     this._renderActions(body, [c]);
   }
@@ -247,7 +297,7 @@ export class Inspector {
     if (clips.length === 1) {
       mk('✂ ' + t('edit.split'), '', () => this.hooks.split());
       mk('⧉ ' + t('edit.duplicate'), '', () => this.hooks.duplicate());
-      mk('🎵 ' + t('edit.detachAudio'), '', () => this.hooks.detachAudio());
+      if (clips[0].kind !== 'text') mk('🎵 ' + t('edit.detachAudio'), '', () => this.hooks.detachAudio());
     }
     mk('🗑 ' + t('edit.delete'), 'danger', () => this.hooks.deleteSelected());
     body.appendChild(row);
@@ -293,7 +343,7 @@ export class Inspector {
     // shortcuts
     this._section(body, t('inspector.shortcuts'));
     const sc = document.createElement('div'); sc.className = 'shortcuts';
-    const rows = [['Space', 'sc.play'], ['S', 'sc.split'], ['Delete', 'sc.delete'], ['Ctrl+Z', 'sc.undo'], ['Ctrl+Y', 'sc.redo'], ['Ctrl+D', 'sc.dup'], ['← / →', 'sc.frame'], ['Home / End', 'sc.home'], ['Ctrl+Scroll', 'sc.zoom']];
+    const rows = [['Space', 'sc.play'], ['S', 'sc.split'], ['T', 'sc.text'], ['Delete', 'sc.delete'], ['Ctrl+Z', 'sc.undo'], ['Ctrl+Y', 'sc.redo'], ['Ctrl+D', 'sc.dup'], ['← / →', 'sc.frame'], ['Home / End', 'sc.home'], ['Ctrl+Scroll', 'sc.zoom']];
     for (const [k, l] of rows) sc.innerHTML += `<span class="kbd">${k}</span><span>${t(l)}</span>`;
     body.appendChild(sc);
   }

@@ -31,14 +31,27 @@ export function defaultProject() {
   };
 }
 
+export const TRANSITION_TYPES = ['none', 'fade', 'slide-left', 'slide-right', 'slide-up', 'slide-down', 'zoom', 'wipe-left', 'wipe-right', 'blur'];
+export const TEXT_DEFAULT_DURATION = 5;
+export const FONT_FAMILIES = ['Arial', 'Helvetica', 'Verdana', 'Trebuchet MS', 'Georgia', 'Times New Roman', 'Courier New', 'Impact', 'Comic Sans MS', 'Segoe UI', 'Roboto', 'sans-serif', 'serif', 'monospace'];
+
+export function defaultTransition(patch = {}) { return { type: 'none', duration: 0.5, ...patch }; }
+
 export function defaultClip(patch = {}) {
-  return {
-    id: uid(), trackId: null, mediaId: null, name: '',
+  const c = {
+    id: uid(), trackId: null, mediaId: null, kind: 'media', name: '',
     start: 0, duration: 0, offset: 0,
     volume: 1, muted: false, fadeIn: 0, fadeOut: 0,
     opacity: 1, fit: 'contain', scale: 1, x: 0, y: 0,
+    transIn: defaultTransition(), transOut: defaultTransition(),
+    // text layer properties (used when kind === 'text')
+    text: '', fontFamily: 'Arial', fontSize: 8, color: '#ffffff', bold: true, italic: false, align: 'center',
+    bgEnabled: false, bgColor: '#000000', bgOpacity: 0.6, outlineColor: '#000000', outlineWidth: 0, shadow: true, lineHeight: 1.2,
     ...patch,
   };
+  c.transIn = defaultTransition(patch.transIn);
+  c.transOut = defaultTransition(patch.transOut);
+  return c;
 }
 
 export class Store extends Emitter {
@@ -152,8 +165,18 @@ export class Store extends Emitter {
 
   /** Whether kind of media can be placed on given track kind. */
   canPlaceKind(mediaKind, trackKind) {
-    if (trackKind === 'video') return mediaKind === 'video' || mediaKind === 'image';
+    if (trackKind === 'video') return mediaKind === 'video' || mediaKind === 'image' || mediaKind === 'text';
     return mediaKind === 'audio' || mediaKind === 'video';
+  }
+  /** Placement kind of a clip: media kind, or 'text' for text layers. */
+  clipKind(clip) { if (clip.kind === 'text') return 'text'; const m = this.media.get(clip.mediaId); return m ? m.kind : null; }
+  /** The clip that directly follows `clip` on its track (touching within tolerance), or null. */
+  adjacentNext(clip, tol = 0.02) {
+    const end = clip.start + clip.duration;
+    return this.project.clips.find((c) => c.trackId === clip.trackId && c.id !== clip.id && Math.abs(c.start - end) <= tol) || null;
+  }
+  adjacentPrev(clip, tol = 0.02) {
+    return this.project.clips.find((c) => c.trackId === clip.trackId && c.id !== clip.id && Math.abs(c.start + c.duration - clip.start) <= tol) || null;
   }
   /** Is [start, start+duration) free on track (ignoring excluded clip ids)? */
   isFree(trackId, start, duration, excludeIds = []) {
@@ -200,6 +223,7 @@ export class Store extends Emitter {
   }
   /** Max duration for a clip given media (Infinity for images). */
   maxClipDuration(clip) {
+    if (clip.kind === 'text') return Infinity;
     const m = this.media.get(clip.mediaId);
     if (!m || m.kind === 'image') return Infinity;
     return Math.max(0, m.duration - clip.offset);
@@ -211,9 +235,9 @@ export class Store extends Emitter {
     const first = c.duration;
     const d1 = time - c.start;
     c.duration = d1;
-    // fades are kept on the outer edges only
-    const right = defaultClip({ ...c, id: uid(), start: time, duration: first - d1, offset: c.offset + d1, fadeIn: 0 });
-    c.fadeOut = 0;
+    // fades and transitions are kept on the outer edges only
+    const right = defaultClip({ ...c, id: uid(), start: time, duration: first - d1, offset: c.offset + d1, fadeIn: 0, transIn: { type: 'none' }, transOut: { ...c.transOut } });
+    c.fadeOut = 0; c.transOut = defaultTransition();
     this.project.clips.push(right);
     this.changed('split');
     return right;
