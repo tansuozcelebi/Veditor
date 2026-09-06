@@ -1,0 +1,84 @@
+/* ===== Veditor: styles for the imperative timeline and the preview canvas =====
+   Everything is scoped under .veditor so the module can live inside another app. */
+.veditor {
+  --ve-header-w: 190px;
+  --ve-ruler-h: 28px;
+  --ve-lane-video-h: 68px;
+  --ve-lane-audio-h: 56px;
+  --ve-video: #3b82f6;
+  --ve-audio: #22c55e;
+  --ve-image: #f59e0b;
+  --ve-text: #a855f7;
+  --ve-playhead: #ef4444;
+}
+.ve-media-host { position: fixed; left: -9999px; top: 0; width: 2px; height: 2px; overflow: hidden; opacity: .01; pointer-events: none; }
+
+.veditor .ve-preview-canvas { max-width: 100%; max-height: 100%; background: #000; object-fit: contain; box-shadow: 0 0 0 1px var(--border), 0 10px 40px rgb(0 0 0 / .45); }
+
+/* ---------- timeline grid ---------- */
+.veditor .tl-body { position: relative; overflow: auto; display: grid; grid-template-columns: var(--ve-header-w) 1fr; grid-template-rows: var(--ve-ruler-h) auto; min-height: 0; flex: 1; }
+.veditor .tl-corner { position: sticky; top: 0; left: 0; z-index: 6; background: var(--card); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.veditor .tl-ruler-wrap { position: sticky; top: 0; z-index: 5; background: var(--card); border-bottom: 1px solid var(--border); height: var(--ve-ruler-h); cursor: pointer; }
+.veditor .tl-ruler-wrap canvas { display: block; height: var(--ve-ruler-h); }
+.veditor .tl-headers { position: sticky; left: 0; z-index: 4; background: var(--background); border-right: 1px solid var(--border); }
+.veditor .tl-lanes { position: relative; min-width: 0; }
+.veditor .tl-lanes-inner { position: relative; min-height: 100%; }
+.veditor .track-header { display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--border); border-left: 3px solid transparent; cursor: pointer; }
+.veditor .track-header.video { height: var(--ve-lane-video-h); border-left-color: var(--ve-video); }
+.veditor .track-header.audio { height: var(--ve-lane-audio-h); border-left-color: var(--ve-audio); }
+.veditor .track-header.selected { background: var(--accent); }
+.veditor .track-header .th-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.veditor .track-header .th-name input { width: 100%; background: var(--input); border: 1px solid var(--ring); border-radius: 4px; padding: 1px 4px; font-size: 12px; color: inherit; }
+.veditor .track-header .th-btns { display: flex; gap: 3px; }
+.veditor .track-header .th-btns button { width: 22px; height: 20px; border-radius: 4px; border: 1px solid var(--border); background: var(--muted); color: var(--muted-foreground); font-size: 10px; font-weight: 700; padding: 0; cursor: pointer; }
+.veditor .track-header .th-btns button.on { background: var(--ve-video); border-color: var(--ve-video); color: #fff; }
+.veditor .track-header .th-btns button.on.mute { background: var(--ve-playhead); border-color: var(--ve-playhead); }
+.veditor .track-header .th-btns button.on.solo { background: var(--ve-image); border-color: var(--ve-image); }
+.veditor .lane { position: relative; border-bottom: 1px solid var(--border); background-image: repeating-linear-gradient(90deg, transparent 0, transparent 99px, rgb(255 255 255 / .04) 99px, rgb(255 255 255 / .04) 100px); }
+.veditor .lane.video { height: var(--ve-lane-video-h); }
+.veditor .lane.audio { height: var(--ve-lane-audio-h); }
+.veditor .lane.drop-ok { background-color: rgb(59 130 246 / .10); }
+.veditor .lane.drop-bad { background-color: rgb(239 68 68 / .10); }
+.veditor .lane.locked { background-color: rgb(255 255 255 / .03); }
+.veditor .lane.locked::after { content: "🔒"; position: absolute; right: 8px; top: 6px; opacity: .4; font-size: 12px; }
+
+/* ---------- clips ---------- */
+.veditor .clip { position: absolute; top: 4px; bottom: 4px; border-radius: 6px; overflow: hidden; border: 1px solid rgb(255 255 255 / .15); background: var(--muted); cursor: grab; user-select: none; touch-action: none; color: #fff; }
+.veditor .clip.video { background: #1e3a6b; }
+.veditor .clip.image { background: #5a3d0c; }
+.veditor .clip.audio { background: #144d2b; }
+.veditor .clip.text { background: linear-gradient(180deg, #5b2d8e, #3f1f66); }
+.veditor .clip.text .clip-label { font-family: Georgia, serif; font-size: 12px; }
+.veditor .clip.selected { border-color: #fff; box-shadow: 0 0 0 1px #fff inset; z-index: 2; }
+.veditor .clip.dragging { opacity: .85; cursor: grabbing; z-index: 3; }
+.veditor .clip.muted .clip-label::after { content: " 🔇"; }
+.veditor .clip .thumbs { position: absolute; inset: 0; display: flex; overflow: hidden; }
+.veditor .clip .thumbs img { height: 100%; flex: 0 0 auto; object-fit: cover; opacity: .9; pointer-events: none; }
+.veditor .clip .wave { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.veditor .clip .clip-label { position: absolute; left: 6px; top: 3px; right: 6px; font-size: 11px; font-weight: 600; text-shadow: 0 1px 2px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.veditor .clip .fade { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+.veditor .clip .fade.in { left: 0; background: linear-gradient(90deg, rgb(0 0 0 / .6), transparent); }
+.veditor .clip .fade.out { right: 0; background: linear-gradient(270deg, rgb(0 0 0 / .6), transparent); }
+.veditor .clip .trans { position: absolute; top: 0; bottom: 0; display: flex; align-items: flex-end; justify-content: center; font-size: 12px; color: #fff; pointer-events: none; background: rgb(255 255 255 / .18); border-bottom: 2px solid #fbbf24; }
+.veditor .clip .trans.in { left: 0; border-right: 1px dashed rgb(255 255 255 / .5); }
+.veditor .clip .trans.out { right: 0; border-left: 1px dashed rgb(255 255 255 / .5); }
+.veditor .clip .handle { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 2; }
+.veditor .clip .handle.l { left: 0; } .veditor .clip .handle.r { right: 0; }
+.veditor .clip .handle::after { content: ""; position: absolute; top: 30%; bottom: 30%; width: 2px; left: 3px; background: rgb(255 255 255 / .55); border-radius: 1px; }
+.veditor .clip:hover .handle::after, .veditor .clip.selected .handle::after { background: #fff; }
+.veditor .tl-playhead { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--ve-playhead); z-index: 7; pointer-events: none; }
+.veditor .tl-playhead-cap { position: absolute; top: 0; left: -7px; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 9px solid var(--ve-playhead); }
+.veditor .snap-line { position: absolute; top: 0; bottom: 0; border-left: 1px dashed #fff; z-index: 6; pointer-events: none; }
+
+/* ---------- media library ---------- */
+.veditor .media-card { position: relative; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); background: var(--card); cursor: grab; user-select: none; }
+.veditor .media-card:hover { border-color: var(--ring); }
+.veditor .media-card.selected { border-color: var(--ve-video); }
+.veditor .media-card .thumb { width: 100%; aspect-ratio: 16 / 9; background: #000 center / cover no-repeat; display: flex; align-items: center; justify-content: center; font-size: 26px; }
+.veditor .media-card .thumb.audio { background: linear-gradient(135deg, #123 0%, #1a3d2a 100%); }
+.veditor .media-card .thumb.image { background-size: contain; }
+.veditor .media-card .actions { position: absolute; top: 4px; right: 4px; display: none; gap: 3px; }
+.veditor .media-card:hover .actions { display: flex; }
+.veditor .drag-over { outline: 2px dashed var(--ve-video); outline-offset: -6px; background: rgb(59 130 246 / .06); }
+.veditor .rec-indicator::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ve-playhead); margin-right: 6px; animation: ve-blink 1s infinite; }
+@keyframes ve-blink { 50% { opacity: .2; } }

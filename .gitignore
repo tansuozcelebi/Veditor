@@ -1,4 +1,6 @@
 node_modules/
+dist/
+.pw-browsers/
 test/output/
 test/fixtures/*.webm
 test/fixtures/*.wav

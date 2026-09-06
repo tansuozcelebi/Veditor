@@ -1,7 +1,10 @@
 // ===================== Export (MediaRecorder: canvas + mixed audio) =====================
-import { fixWebmDuration } from './webm-fix.js';
+import { fixWebmDuration } from './webm-fix';
+import type { Player } from './player';
+import type { Store } from './state';
+import type { ExportFormat, ExportOptions, ExportProgress, ExportResult } from './types';
 
-const CANDIDATES = [
+const CANDIDATES: ExportFormat[] = [
   { mime: 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', label: 'MP4 (H.264 / AAC)', ext: 'mp4', video: true },
   { mime: 'video/mp4;codecs=avc1,mp4a.40.2', label: 'MP4 (H.264 / AAC)', ext: 'mp4', video: true },
   { mime: 'video/mp4', label: 'MP4', ext: 'mp4', video: true },
@@ -14,7 +17,7 @@ const CANDIDATES = [
   { mime: 'audio/webm', label: 'WebM Audio', ext: 'weba', video: false },
 ];
 
-export function supportedFormats() {
+export function supportedFormats(): ExportFormat[] {
   if (typeof MediaRecorder === 'undefined') return [];
   const seen = new Set();
   return CANDIDATES.filter((c) => {
@@ -24,7 +27,8 @@ export function supportedFormats() {
 }
 
 export class Exporter {
-  constructor(player, store) { this.player = player; this.store = store; this.active = false; this._cancel = false; }
+  player: Player; store: Store; active = false; private _cancel = false;
+  constructor(player: Player, store: Store) { this.player = player; this.store = store; }
   cancel() { this._cancel = true; }
 
   /**
@@ -32,15 +36,15 @@ export class Exporter {
    * @param {(info:{time:number,duration:number,progress:number})=>void} onProgress
    * @returns {Promise<{blob:Blob, ext:string, duration:number}>}
    */
-  async run(opts, onProgress) {
+  async run(opts: ExportOptions, onProgress?: (p: ExportProgress) => void): Promise<ExportResult> {
     const { player, store } = this;
     if (this.active) throw new Error('busy');
     const duration = store.projectDuration();
     if (duration <= 0) throw new Error('empty');
     this.active = true; this._cancel = false;
     const prevMuted = player.monitorMuted;
-    let recorder, timer;
-    const chunks = [];
+    let recorder: MediaRecorder | undefined, timer: ReturnType<typeof setInterval> | undefined;
+    const chunks: Blob[] = [];
     try {
       player.pause();
       await player.resumeAudio();
@@ -52,24 +56,25 @@ export class Exporter {
       player._syncElements(0); player.render(0);
       await new Promise((r) => setTimeout(r, 250));
 
-      const tracks = [];
+      const tracks: MediaStreamTrack[] = [];
       if (opts.format.video) tracks.push(...player.canvas.captureStream(opts.fps).getVideoTracks());
       tracks.push(...player.recDest.stream.getAudioTracks());
       const stream = new MediaStream(tracks);
-      const rOpts = { mimeType: opts.format.mime };
+      const rOpts: MediaRecorderOptions = { mimeType: opts.format.mime };
       if (opts.format.video && opts.videoBitrate) rOpts.videoBitsPerSecond = opts.videoBitrate;
       if (opts.audioBitrate) rOpts.audioBitsPerSecond = opts.audioBitrate;
       recorder = new MediaRecorder(stream, rOpts);
       recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-      const stopped = new Promise((res) => { recorder.onstop = res; });
-      const errored = new Promise((_, rej) => { recorder.onerror = (e) => rej(e.error || new Error('recorder error')); });
+      const rec = recorder;
+      const stopped = new Promise<void>((res) => { rec.onstop = () => res(); });
+      const errored = new Promise<never>((_, rej) => { rec.onerror = (e: any) => rej(e.error || new Error('recorder error')); });
 
       recorder.start(500);
       const started = performance.now();
       await player.play();
 
       await Promise.race([
-        new Promise((res) => {
+        new Promise<void>((res) => {
           const off = player.on('ended', () => { off(); res(); });
           timer = setInterval(() => {
             const t = player.currentTime;

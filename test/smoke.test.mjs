@@ -13,11 +13,16 @@ const outDir = join(root, 'test/output'); mkdirSync(outDir, { recursive: true })
 if (!existsSync(join(fixtures, 'clipA.webm'))) { console.log('generating fixtures…'); const r = spawnSync(process.execPath, [join(root, 'test/gen-fixtures.mjs')], { stdio: 'inherit' }); if (r.status !== 0) process.exit(1); }
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webm': 'video/webm', '.wav': 'audio/wav', '.json': 'application/json' };
+// Serves the production build (dist/) with an SPA fallback, so the React router route /video-editor resolves.
+const dist = join(root, 'dist');
+if (!existsSync(join(dist, 'index.html'))) { console.error('dist/index.html not found – run `npm run build` first'); process.exit(1); }
 const server = http.createServer((req, res) => {
-  let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html';
-  const f = join(root, p);
-  try { const st = statSync(f); if (!st.isFile()) throw new Error(); res.writeHead(200, { 'Content-Type': MIME[extname(f)] || 'application/octet-stream' }); res.end(readFileSync(f)); }
-  catch { res.writeHead(404); res.end('not found'); }
+  let p = decodeURIComponent(req.url.split('?')[0]);
+  let f = join(dist, p);
+  try { if (p === '/' || !statSync(f).isFile()) throw new Error(); }
+  catch { f = join(dist, 'index.html'); }
+  res.writeHead(200, { 'Content-Type': MIME[extname(f)] || 'application/octet-stream' });
+  res.end(readFileSync(f));
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -35,8 +40,8 @@ page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
 
 try {
-  await page.goto(base + '/index.html');
-  await page.waitForFunction(() => window.veditor && window.veditor.store);
+  await page.goto(base + '/video-editor');
+  await page.waitForFunction(() => window.veditor && window.veditor.store && window.veditor.tl);
   check('app boots', true);
 
   // ---- import ----
@@ -91,7 +96,7 @@ try {
   check('undo / redo', split.undone === 4 && split.redone === 5);
 
   // ---- mouse drag: move clipB right by 120px, then trim its right edge ----
-  const pps = await page.evaluate(() => window.veditor.timeline.pps);
+  const pps = await page.evaluate(() => window.veditor.tl.pps);
   const bBox = await page.locator(`.clip[data-clip-id="${placed.b}"]`).boundingBox();
   await page.mouse.move(bBox.x + bBox.width / 2, bBox.y + bBox.height / 2);
   await page.mouse.down(); await page.mouse.move(bBox.x + bBox.width / 2 + 60, bBox.y + bBox.height / 2, { steps: 5 }); await page.mouse.move(bBox.x + bBox.width / 2 + 120, bBox.y + bBox.height / 2, { steps: 5 }); await page.mouse.up();
@@ -153,9 +158,9 @@ try {
   await page.evaluate(() => window.veditor.player.seek(3));
   const clipsBefore = await page.evaluate(() => window.veditor.store.project.clips.length);
   await page.click('#btnRecordVoice');
-  await page.click('.modal-foot .btn.primary');
+  await page.click('[data-testid=record-start]');
   await page.waitForTimeout(1800);
-  await page.click('.modal-foot .btn.danger');
+  await page.click('[data-testid=record-stop]');
   await page.waitForFunction((n) => window.veditor.store.project.clips.length === n + 1, clipsBefore, { timeout: 20000 });
   await page.waitForFunction(() => [...window.veditor.store.media.values()].every((m) => !m.analyzing), null, { timeout: 30000 });
   const rec = await page.evaluate(() => { const { store } = window.veditor; const m = [...store.media.values()].find((x) => x.recorded); const c = store.project.clips.find((x) => x.mediaId === m.id); return { kind: m.kind, duration: m.duration, start: c.start, track: store.getTrack(c.trackId).kind }; });
@@ -218,21 +223,22 @@ try {
 
   // ---- UI-level checks: inspector, context menu, export dialog ----
   await page.click(`.clip[data-clip-id="${placed.b}"]`);
-  const insp = await page.evaluate(() => ({ title: document.getElementById('inspectorTitle').textContent, ranges: document.querySelectorAll('#inspectorBody input[type=range]').length, presets: document.querySelectorAll('#inspectorBody .toggle-row button').length }));
+  const insp = await page.evaluate(() => ({ title: document.getElementById('inspectorTitle').textContent, ranges: document.querySelectorAll('#inspectorBody [data-slot=slider]').length, presets: document.querySelectorAll('#inspectorBody [data-testid=layout-presets] button').length }));
   check('inspector shows clip properties', /Klip/.test(insp.title) && insp.ranges >= 4 && insp.presets >= 7, JSON.stringify(insp));
   await page.click(`.clip[data-clip-id="${placed.b}"]`, { button: 'right' });
-  const menuItems = await page.evaluate(() => { const m = document.getElementById('contextMenu'); return m.hidden ? 0 : m.querySelectorAll('button').length; });
+  await page.waitForSelector('#contextMenu', { timeout: 5000 }).catch(() => null);
+  const menuItems = await page.evaluate(() => { const m = document.getElementById('contextMenu'); return m ? m.querySelectorAll('[data-slot=context-menu-item]').length : 0; });
   check('context menu opens on right-click', menuItems >= 6, `items=${menuItems}`);
   await page.keyboard.press('Escape');
   await page.click('#btnExport');
   await page.waitForSelector('#exFormat');
   await page.selectOption('#exFormat', { index: await page.evaluate(() => [...document.querySelectorAll('#exFormat option')].findIndex((o) => /VP8/.test(o.textContent))) });
   await page.evaluate(() => { const { store } = window.veditor; store.pushHistory(); for (const c of store.project.clips) { if (c.start >= 2) { store.removeClips([c.id], { silent: true }); continue; } if (c.start + c.duration > 2) c.duration = 2 - c.start; } store.changed('trim-for-ui-test'); });
-  await page.click('.modal-foot .btn.primary');
-  await page.waitForSelector('#exResult:not([hidden]) a[download]', { timeout: 30000 });
+  await page.click('[data-testid=export-start]');
+  await page.waitForSelector('#exResult a[download]', { timeout: 30000 });
   const dlg = await page.evaluate(() => ({ href: document.querySelector('#exResult a[download]').getAttribute('download'), status: document.getElementById('exStatus').textContent, size: window.__lastExport && window.__lastExport.blob.size }));
   check('export dialog produces a downloadable file', /\.webm$/.test(dlg.href) && dlg.size > 10000, JSON.stringify(dlg));
-  await page.click('.modal-foot .btn.ghost');
+  await page.click('[data-testid=export-close]');
   await page.evaluate(() => { const { store } = window.veditor; store.undo(); });
 
   // ---- export (shorten the project first so the real-time export stays quick) ----
@@ -241,8 +247,7 @@ try {
     store.pushHistory();
     for (const c of store.project.clips) { if (c.start >= 3.5) { store.removeClips([c.id], { silent: true }); continue; } if (c.start + c.duration > 3.5) c.duration = 3.5 - c.start; }
     store.changed('trim-for-test');
-    const { supportedFormats } = await import('./js/exporter.js');
-    const formats = supportedFormats();
+    const formats = window.veditor.supportedFormats();
     const fmt = formats.find((f) => /vp8/.test(f.mime)) || formats.find((f) => f.ext === 'webm') || formats[0]; // VP8: decodable by the bundled ffmpeg
     const progress = [];
     const out = await exporter.run({ format: fmt, fps: 30, videoBitrate: 2500000, audioBitrate: 128000, muteMonitor: true }, (p) => progress.push(p.progress));

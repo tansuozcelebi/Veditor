@@ -7,14 +7,14 @@ const ID_EBML = 0x1a45dfa3, ID_SEGMENT = 0x18538067, ID_SEEKHEAD = 0x114d9b74, I
   ID_CLUSTER = 0x1f43b675, ID_CUES = 0x1c53bb6b, ID_TIMECODESCALE = 0x2ad7b1, ID_DURATION = 0x4489,
   ID_SEEK = 0x4dbb, ID_SEEKPOSITION = 0x53ac;
 
-function readId(b, p) {
+function readId(b: Uint8Array, p: number) {
   const first = b[p];
   let len = 1;
   if (first & 0x80) len = 1; else if (first & 0x40) len = 2; else if (first & 0x20) len = 3; else if (first & 0x10) len = 4; else throw new Error('bad id');
   let v = 0; for (let i = 0; i < len; i++) v = v * 256 + b[p + i];
   return { id: v, len };
 }
-function readSize(b, p) {
+function readSize(b: Uint8Array, p: number) {
   const first = b[p];
   let len = 1, mask = 0x80;
   while (len <= 8 && !(first & mask)) { len++; mask >>= 1; }
@@ -23,20 +23,20 @@ function readSize(b, p) {
   for (let i = 1; i < len; i++) { v = v * 256 + b[p + i]; if (b[p + i] !== 0xff) allOnes = false; }
   return { size: v, len, unknown: allOnes };
 }
-function encodeSize(v, len) {
+function encodeSize(v: number, len: number) {
   const out = new Uint8Array(len);
   for (let i = len - 1; i >= 0; i--) { out[i] = v & 0xff; v = Math.floor(v / 256); }
   out[0] |= 0x80 >> (len - 1);
   return out;
 }
-function readUint(b, p, len) { let v = 0; for (let i = 0; i < len; i++) v = v * 256 + b[p + i]; return v; }
+function readUint(b: Uint8Array, p: number, len: number) { let v = 0; for (let i = 0; i < len; i++) v = v * 256 + b[p + i]; return v; }
 
 /**
  * @param {Blob} blob   WebM blob produced by MediaRecorder
  * @param {number} durationSec
  * @returns {Promise<Blob>} patched blob (or the original if patching is not possible)
  */
-export async function fixWebmDuration(blob, durationSec) {
+export async function fixWebmDuration(blob: Blob, durationSec: number): Promise<Blob> {
   try {
     const headLen = Math.min(blob.size, 2 * 1024 * 1024);
     const b = new Uint8Array(await blob.slice(0, headLen).arrayBuffer());
@@ -48,7 +48,7 @@ export async function fixWebmDuration(blob, durationSec) {
     ({ id, len } = readId(b, p)); if (id !== ID_SEGMENT) return blob;
     p += len; sz = readSize(b, p); p += sz.len;
     const segDataStart = p;
-    let infoPos = -1, infoHeaderLen = 0, infoDataLen = 0, seekHead = null, clusterPos = -1, timecodeScale = 1000000, durationPos = -1, durationLen = 0;
+    let infoPos = -1, infoHeaderLen = 0, infoDataLen = 0, seekHead: { pos: number; dataStart: number; dataLen: number } | null = null, clusterPos = -1, timecodeScale = 1000000, durationPos = -1, durationLen = 0;
     while (p < b.length) {
       const idr = readId(b, p); const szr = readSize(b, p + idr.len);
       const dataStart = p + idr.len + szr.len;
