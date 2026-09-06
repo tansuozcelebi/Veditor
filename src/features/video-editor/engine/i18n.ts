@@ -1,5 +1,6 @@
 // ===================== i18n (TR / EN) =====================
-const dict = {
+export type Lang = 'tr' | 'en';
+const dict: Record<Lang, Record<string, string>> = {
   tr: {
     'project.open': 'Aç', 'project.save': 'Kaydet', 'project.default': 'Yeni Proje',
     'export.button': 'Dışa Aktar',
@@ -152,28 +153,31 @@ const dict = {
   },
 };
 
-let lang = 'tr';
+let lang: Lang = 'tr';
+const listeners = new Set<(l: Lang) => void>();
 try {
   const saved = localStorage.getItem('veditor.lang');
-  if (saved && dict[saved]) lang = saved;
+  if (saved && (saved === 'tr' || saved === 'en')) lang = saved;
   else if (!(navigator.language || '').toLowerCase().startsWith('tr')) lang = 'en';
 } catch { /* ignore */ }
 
-export function t(key, vars) {
+export function t(key: string, vars?: Record<string, string | number>) {
   let s = (dict[lang] && dict[lang][key]) ?? dict.en[key] ?? key;
   if (vars) for (const [k, v] of Object.entries(vars)) s = s.replace(new RegExp('\\{' + k + '\\}', 'g'), String(v));
   return s;
 }
 export function getLang() { return lang; }
-export function setLang(l) {
+export function setLang(l: Lang) {
   if (!dict[l]) return;
   lang = l;
+  listeners.forEach((fn) => fn(l));
   try { localStorage.setItem('veditor.lang', l); } catch { /* ignore */ }
   document.documentElement.lang = l;
   applyStatic();
 }
-export function applyStatic(root = document) {
-  root.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.dataset.i18n); });
-  root.querySelectorAll('[data-i18n-title]').forEach((el) => { el.title = t(el.dataset.i18nTitle); });
-  root.querySelectorAll('[data-i18n-placeholder]').forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+export function onLangChange(fn: (l: Lang) => void) { listeners.add(fn); return () => { listeners.delete(fn); }; }
+export function applyStatic(root: ParentNode = document) {
+  root.querySelectorAll<HTMLElement>('[data-i18n]').forEach((el) => { el.textContent = t(el.dataset.i18n!); });
+  root.querySelectorAll<HTMLElement>('[data-i18n-title]').forEach((el) => { el.title = t(el.dataset.i18nTitle!); });
+  root.querySelectorAll<HTMLInputElement>('[data-i18n-placeholder]').forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder!); });
 }

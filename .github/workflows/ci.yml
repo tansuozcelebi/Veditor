@@ -42,9 +42,12 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Lint
-        run: npx eslint .
+        run: npm run lint
 
-      - name: End-to-end smoke test (headless Chromium)
+      - name: Typecheck & build
+        run: npm run build
+
+      - name: End-to-end smoke test (headless Chromium, against the production build)
         run: npm test
 
       - name: Upload test output (screenshot, exported video)
