@@ -33,7 +33,9 @@ seslendirme kaydeder ve sonucu tek bir video dosyası olarak dışa aktarır.
 Sadece statik bir HTTP sunucusu gerekir (ES modülleri `file://` üzerinden çalışmaz):
 
 ```bash
-npm start            # http://localhost:8080 adresinde açar (http-server, kurulum gerektirmez)
+npm run dev          # http://localhost:8080 adresinde tarayıcıda açar (http-server, kurulum gerektirmez)
+npm start            # aynı komut
+npm run serve        # tarayıcı açmadan yalnızca sunucu
 # veya
 python3 -m http.server 8080
 ```
