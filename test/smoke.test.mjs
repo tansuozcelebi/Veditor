@@ -130,6 +130,21 @@ try {
   check('PiP layer drawn on top', (play.pip[1] > 120 || play.pip[0] > 200), `pip rgb=${play.pip.slice(0, 3)}`);
   check('media elements were playing', play.actives >= 2, `active=${play.actives}`);
 
+  // ---- engine revival (React StrictMode runs effect cleanup + re-run on the same engine instance) ----
+  const revive = await page.evaluate(async ({ b }) => {
+    const { player, store } = window.veditor;
+    player.destroy(); player.attach();
+    player.seek(store.getClip(b).start + 0.2); await player.play();
+    await new Promise((r) => setTimeout(r, 1200));
+    const t = player.currentTime - store.getClip(b).start - 0.2; const playing = player.playing;
+    const ui = document.getElementById('timeCurrent').textContent;
+    const px = player.canvas.getContext('2d').getImageData(player.canvas.width / 2, player.canvas.height / 2, 1, 1).data;
+    const actives = [...player.nodes.values()].filter((n) => n.el && n.el.tagName !== 'IMG' && !n.el.paused).length;
+    player.pause();
+    return { t, playing, ui, px: [...px], actives };
+  }, placed);
+  check('player plays again after destroy()+attach()', revive.playing && revive.t > 0.8 && revive.ui !== '00:00.000' && revive.px[2] > 100 && revive.actives >= 2, JSON.stringify(revive));
+
   // ---- grid view ----
   const grid = await page.evaluate(async ({ b }) => {
     const { player, store } = window.veditor; player.viewMode = 'grid'; player.seek(store.getClip(b).start + 0.5);
@@ -266,6 +281,27 @@ try {
   check('exported WebM carries duration metadata (patched)', isFinite(probedDur) && approx(probedDur, 3.5, 0.6), `probed=${probedDur}`);
   const decode = spawnSync(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-i', outFile, '-f', 'image2', '-frames:v', '3', join(outDir, 'frame%d.png')], { encoding: 'utf8' });
   check('exported file decodes without errors', decode.status === 0 && !decode.stderr.trim() && existsSync(join(outDir, 'frame3.png')), decode.stderr.trim().slice(0, 200));
+
+  // ---- host-app menu navigation: leave the editor route and come back (unmount + remount) ----
+  await page.click('nav a[href="/dashboard"]');
+  await page.waitForFunction(() => !document.getElementById('previewPanel'));
+  const hostLeft = await page.evaluate(() => ({ mediaHosts: document.querySelectorAll('.ve-media-host').length, videos: document.querySelectorAll('video').length }));
+  check('editor unmounts cleanly when leaving the route', hostLeft.mediaHosts === 0 && hostLeft.videos === 0, JSON.stringify(hostLeft));
+  await page.click('nav a[href="/video-editor"]');
+  await page.waitForFunction(() => window.veditor && window.veditor.tl && document.getElementById('previewPanel'));
+  await page.setInputFiles('#fileInput', [join(fixtures, 'clipA.webm')]);
+  await page.waitForFunction(() => window.veditor.store.media.size === 1 && [...window.veditor.store.media.values()].every((m) => !m.analyzing), null, { timeout: 30000 });
+  const remount = await page.evaluate(async () => {
+    const { player, store, addMediaToTimeline } = window.veditor;
+    addMediaToTimeline([...store.media.keys()][0]);
+    await player.play();
+    await new Promise((r) => setTimeout(r, 1200));
+    const t = player.currentTime; const playing = player.playing; const ui = document.getElementById('timeCurrent').textContent;
+    const px = player.canvas.getContext('2d').getImageData(player.canvas.width / 2, player.canvas.height / 2, 1, 1).data;
+    player.pause();
+    return { t, playing, ui, px: [...px], clips: store.project.clips.length };
+  });
+  check('editor works again after returning to the route', remount.playing && remount.t > 0.8 && remount.ui !== '00:00.000' && remount.px[2] > 100 && remount.clips === 1, JSON.stringify(remount));
 
   check('no page errors', errors.length === 0, errors.join(' ; ').slice(0, 500));
 } catch (e) {

@@ -44,6 +44,7 @@ export class Player extends Emitter {
   private _startTime = 0;
   private _raf = 0;
   private _unsub: (() => void)[] = [];
+  private _attached = false;
   constructor(store: Store, canvas: HTMLCanvasElement, host: HTMLElement) {
     super();
     this.store = store;
@@ -51,8 +52,20 @@ export class Player extends Emitter {
     this.ctx2d = canvas.getContext('2d', { alpha: false })!;
     this.host = host;
     this._loop = this._loop.bind(this);
+    this.attach();
+  }
+
+  /**
+   * Start the render loop and follow store changes. Idempotent, and the inverse of destroy():
+   * React StrictMode (and route remounts) run effect cleanups and re-run the effects on the same
+   * engine instance, so a destroyed player must be able to come back to life.
+   */
+  attach() {
+    if (this._attached) return;
+    this._attached = true;
+    this._unsub.push(this.store.on('change', () => this._syncNodes()), this.store.on('media', () => this._syncNodes()));
+    this._syncNodes();
     this._raf = requestAnimationFrame(this._loop);
-    this._unsub.push(store.on('change', () => this._syncNodes()), store.on('media', () => this._syncNodes()));
   }
 
   // ---------- audio graph ----------
@@ -160,6 +173,7 @@ export class Player extends Emitter {
   get duration() { return this.store.projectDuration(); }
   async play() {
     if (this.playing) return;
+    this.attach();
     await this.resumeAudio();
     if (this._time >= this.duration - 1e-3) this._time = 0;
     this._startCtx = this.audio!.currentTime;
@@ -475,9 +489,14 @@ export class Player extends Emitter {
     g.restore();
   }
 
+  /** Stop everything and release media/audio resources. The player can be revived with attach(). */
   destroy() {
+    if (this.playing) this.pause();
     cancelAnimationFrame(this._raf);
+    this._raf = 0;
     this._unsub.forEach((u) => u());
+    this._unsub = [];
+    this._attached = false;
     for (const id of [...this.nodes.keys()]) this._disposeNode(id);
     for (const g of this.trackGains.values()) { try { g.disconnect(); } catch { /* ignore */ } }
     this.trackGains.clear();
