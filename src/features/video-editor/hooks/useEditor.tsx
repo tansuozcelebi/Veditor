@@ -34,7 +34,8 @@ export function EditorProvider({ children, onReady }: { children: ReactNode; onR
     return () => { ctx.host.remove(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx]);
-  useEffect(() => () => ctx.player.destroy(), [ctx]);
+  // StrictMode runs this cleanup and then the effect again on the same ctx, so re-attach on every run.
+  useEffect(() => { ctx.player.attach(); return () => ctx.player.destroy(); }, [ctx]);
   return <EditorContext.Provider value={ctx}>{children}</EditorContext.Provider>;
 }
 
