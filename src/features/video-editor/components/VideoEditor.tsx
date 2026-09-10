@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { EditorProvider, useEditor, useI18n, type EditorContextValue } from '../hooks/useEditor';
+import { EditorProvider, useEditor, useI18n, type EditorContextValue, type EditorSession } from '../hooks/useEditor';
 import { TopBar } from './TopBar';
 import { MediaLibrary } from './MediaLibrary';
 import { useImportFiles } from '../hooks/useImportFiles';
@@ -27,12 +27,18 @@ export interface VideoEditorProps {
   onExport?: (result: ExportResult, fileName: string) => void;
   /** Called once the engine is ready; exposes store/player for host integrations. */
   onReady?: (ctx: EditorContextValue) => void;
+  /**
+   * Editor session (project + engine) to mount. Create it once with createEditorSession() and keep it
+   * outside the component tree (module scope, a store, a context) so the project survives route changes.
+   * Defaults to a shared session, which also persists across mounts.
+   */
+  session?: EditorSession;
 }
 
 /** Multi-track video editor. Self-contained: mount it anywhere (a route, a tab, a dialog) inside a shadcn/Tailwind app. */
 export function VideoEditor(props: VideoEditorProps) {
   return (
-    <EditorProvider onReady={props.onReady}>
+    <EditorProvider session={props.session} onReady={props.onReady}>
       <TooltipProvider>
         <EditorShell {...props} />
         <Toaster position="bottom-center" richColors />

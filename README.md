@@ -97,7 +97,8 @@ src/features/video-editor/         ▶ ÖZELLİK MODÜLÜ (host uygulamaya kopya
   components/ExportDialog.tsx      Dışa aktarma diyaloğu (ilerleme, önizleme, indirme)
   components/RecordDialog.tsx      Mikrofon kayıt diyaloğu
   components/OpenProjectDialog.tsx Proje açarken medya eşleştirme
-  hooks/useEditor.tsx              EditorProvider (Store/Player/Exporter ömrü), useEditor, useStoreEvents, usePlayerTime, useI18n
+  hooks/useEditor.tsx              EditorSession (createEditorSession / getDefaultEditorSession), EditorProvider (attach/destroy),
+                                   useEditor, useStoreEvents, usePlayerTime, useI18n
   hooks/useImportFiles.ts          Bildirimli dosya içe aktarma
   engine/types.ts                  Track, Clip, Project, MediaItem, Export* tipleri
   engine/state.ts                  Proje modeli, seçim, geri al / yeniden yap, yerleşim/çakışma, bölme, biçimlendirme
@@ -111,7 +112,8 @@ test/                              Playwright uçtan uca duman testi (üretim de
 ```
 
 **Katmanlar:** `engine/` React'ten bağımsız, tip güvenli sınıflardan oluşur (Store olay yayar, Player/Exporter
-bu Store'u kullanır). `hooks/useEditor.tsx` bu nesneleri bir React Context'te yaşatır; bileşenler
+bu Store'u kullanır). Bu nesneler bir `EditorSession` içinde React ağacının dışında yaşar; `EditorProvider`
+bağlanırken motoru `attach()`, ayrılırken `destroy()` eder (proje korunur, medya öğeleri serbest bırakılır); bileşenler
 `useStoreEvents([...])` ile yalnızca ilgili olaylarda yeniden çizilir (`useSyncExternalStore`). Zaman çizelgesi
 performans nedeniyle imperatif kalır ve `TimelinePanel` içinde bir ref üzerinden yönetilir.
 
@@ -154,6 +156,21 @@ değişkenleri, `@/` takma adı), lucide-react ikonları, react-router. Adımlar
    Host'ta `@custom-variant dark (&:is(.dark *))` (Tailwind v4 shadcn varsayılanı) tanımlı olmalıdır.
 6. **Geri çağrılar:** `onExport(result, fileName)` ile dışa aktarılan dosyayı WMS'e yükleyebilir,
    `onReady(ctx)` ile `store`/`player`/`exporter` nesnelerine erişebilirsiniz.
+7. **Menü geçişlerinde proje korunur:** Proje, medya, geri al geçmişi ve oynatma kafası bir **editör
+   oturumunda** (`EditorSession`) yaşar; bu nesne React ağacının dışındadır. Kullanıcı başka bir menü
+   sayfasına geçip geri döndüğünde editör aynı oturuma yeniden bağlanır, hiçbir şey kaybolmaz (video/ses
+   öğeleri ve AudioContext ayrılırken serbest bırakılır, dönüşte yeniden kurulur). Varsayılan olarak paylaşılan
+   tek bir oturum kullanılır; kontrolü elinize almak için oturumu bir kez oluşturup `session` özelliği ile verin:
+
+   ```tsx
+   import { VideoEditor, createEditorSession, resetDefaultEditorSession } from '@/features/video-editor';
+
+   const editorSession = createEditorSession();   // modül düzeyinde: uygulama ömrü boyunca tek örnek
+   <Route path="/video-editor" element={<VideoEditor embedded session={editorSession} />} />
+
+   // Çıkış yaparken paylaşılan varsayılan oturumu boşaltmak için:
+   resetDefaultEditorSession();
+   ```
 
 Host uygulamanın `package.json` ve `components.json` dosyaları paylaşılırsa bileşen sürümleri ve takma adlar
 birebir hizalanabilir.
