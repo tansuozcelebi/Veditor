@@ -15,7 +15,7 @@ export interface TimelineActions {
 }
 
 export function TimelinePanel({ actions, timelineRef }: { actions: TimelineActions; timelineRef: React.MutableRefObject<Timeline | null> }) {
-  const { store, player } = useEditor();
+  const { store, player, ui } = useEditor();
   const { t } = useI18n();
   useStoreEvents(['selection', 'history', 'change']);
   const refs = { body: useRef<HTMLDivElement>(null), rulerWrap: useRef<HTMLDivElement>(null), ruler: useRef<HTMLCanvasElement>(null), headers: useRef<HTMLDivElement>(null), lanes: useRef<HTMLDivElement>(null), lanesInner: useRef<HTMLDivElement>(null), playhead: useRef<HTMLDivElement>(null) };
@@ -36,8 +36,14 @@ export function TimelinePanel({ actions, timelineRef }: { actions: TimelineActio
       lanes: refs.lanes.current!, lanesInner: refs.lanesInner.current!, playhead: refs.playhead.current!,
     }, hooks);
     timelineRef.current = tl;
+    // restore the zoom / scroll position from the previous mount of this session
+    if (ui.timelinePps) { tl.pps = ui.timelinePps; tl.render(); }
+    if (ui.timelineScrollLeft) refs.body.current!.scrollLeft = ui.timelineScrollLeft;
     setZoom(tl.zoomSliderValue());
-    return () => { tl.destroy(); timelineRef.current = null; };
+    return () => {
+      ui.timelinePps = tl.pps; ui.timelineScrollLeft = refs.body.current?.scrollLeft ?? 0;
+      tl.destroy(); timelineRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store, player]);
 

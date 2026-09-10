@@ -283,31 +283,73 @@ try {
   check('exported file decodes without errors', decode.status === 0 && !decode.stderr.trim() && existsSync(join(outDir, 'frame3.png')), decode.stderr.trim().slice(0, 200));
 
   // ---- host-app menu navigation: leave the editor route and come back (unmount + remount) ----
+  const beforeNav = await page.evaluate(() => { const { store, player } = window.veditor; player.seek(1.25); return { clips: store.project.clips.length, media: store.media.size, time: player.currentTime, pps: window.veditor.tl.pps }; });
+  await page.evaluate(() => window.veditor.tl.zoomBy(1.7));
   await page.click('nav a[href="/dashboard"]');
   await page.waitForFunction(() => !document.getElementById('previewPanel'));
   const hostLeft = await page.evaluate(() => ({ mediaHosts: document.querySelectorAll('.ve-media-host').length, videos: document.querySelectorAll('video').length }));
   check('editor unmounts cleanly when leaving the route', hostLeft.mediaHosts === 0 && hostLeft.videos === 0, JSON.stringify(hostLeft));
   await page.click('nav a[href="/video-editor"]');
   await page.waitForFunction(() => window.veditor && window.veditor.tl && document.getElementById('previewPanel'));
-  await page.setInputFiles('#fileInput', [join(fixtures, 'clipA.webm')]);
-  await page.waitForFunction(() => window.veditor.store.media.size === 1 && [...window.veditor.store.media.values()].every((m) => !m.analyzing), null, { timeout: 30000 });
+  const afterNav = await page.evaluate(() => { const { store, player, tl } = window.veditor; return { clips: store.project.clips.length, media: store.media.size, time: player.currentTime, cards: document.querySelectorAll('.media-card').length, clipEls: document.querySelectorAll('.clip').length, pps: tl.pps, timeUi: document.getElementById('timeCurrent').textContent }; });
+  check('project survives leaving and returning to the route', afterNav.clips === beforeNav.clips && afterNav.media === beforeNav.media && afterNav.cards === beforeNav.media && afterNav.clipEls === beforeNav.clips && approx(afterNav.time, 1.25, 0.01) && afterNav.pps > beforeNav.pps * 1.5, JSON.stringify({ beforeNav, afterNav }));
   const remount = await page.evaluate(async () => {
-    const { player, store, addMediaToTimeline } = window.veditor;
-    addMediaToTimeline([...store.media.keys()][0]);
+    const { player } = window.veditor;
     await player.play();
     await new Promise((r) => setTimeout(r, 1200));
     const t = player.currentTime; const playing = player.playing; const ui = document.getElementById('timeCurrent').textContent;
     const px = player.canvas.getContext('2d').getImageData(player.canvas.width / 2, player.canvas.height / 2, 1, 1).data;
+    const actives = [...player.nodes.values()].filter((n) => n.el && n.el.tagName !== 'IMG' && !n.el.paused).length;
     player.pause();
-    return { t, playing, ui, px: [...px], clips: store.project.clips.length };
+    return { t, playing, ui, px: [...px], actives };
   });
-  check('editor works again after returning to the route', remount.playing && remount.t > 0.8 && remount.ui !== '00:00.000' && remount.px[2] > 100 && remount.clips === 1, JSON.stringify(remount));
+  check('playback works again after returning to the route', remount.playing && remount.t > 2.0 && remount.ui !== '00:00.000' && remount.px[2] > 100 && remount.actives >= 1, JSON.stringify(remount));
 
   check('no page errors', errors.length === 0, errors.join(' ; ').slice(0, 500));
 } catch (e) {
   failures++; console.error('❌ test crashed:', e);
 } finally {
-  await browser.close(); server.close();
+  await browser.close();
 }
+
+// ---- real-user run: default autoplay policy, no fake flags, real mouse clicks on the buttons ----
+{
+  const b2 = await chromium.launch({ channel: 'chromium' });
+  const p2 = await b2.newPage({ viewport: { width: 1600, height: 950 }, locale: 'tr-TR' });
+  const errs2 = []; p2.on('pageerror', (e) => errs2.push('pageerror: ' + e.message)); p2.on('console', (m) => { if (m.type() === 'error') errs2.push('console: ' + m.text()); });
+  try {
+    await p2.goto(base + '/video-editor');
+    await p2.waitForFunction(() => window.veditor && window.veditor.tl);
+    await p2.setInputFiles('#fileInput', [join(fixtures, 'clipA.webm')]);
+    await p2.waitForFunction(() => document.querySelectorAll('.media-card').length === 1 && [...window.veditor.store.media.values()].every((m) => !m.analyzing), null, { timeout: 30000 });
+    await p2.hover('.media-card'); await p2.click('.media-card .actions button:first-child'); // "+" → add to timeline
+    await p2.waitForFunction(() => window.veditor.store.project.clips.length === 1);
+    const readPlay = async () => p2.evaluate(() => { const { player } = window.veditor; const px = player.canvas.getContext('2d').getImageData(player.canvas.width / 2, player.canvas.height / 2, 1, 1).data;
+      return { t: player.currentTime, playing: player.playing, ui: document.getElementById('timeCurrent').textContent, audio: player.audio ? player.audio.state : 'none', px: [...px], actives: [...player.nodes.values()].filter((n) => n.el && n.el.tagName !== 'IMG' && !n.el.paused).length, btn: document.getElementById('btnPlay').querySelector('svg').getAttribute('class') }; });
+    await p2.click('#btnPlay');
+    await p2.waitForTimeout(1500);
+    const r1 = await readPlay();
+    check('real click on Play starts playback (default autoplay policy)', r1.playing && r1.t > 1.0 && r1.ui !== '00:00.000' && r1.audio === 'running' && r1.px[2] > 100 && r1.actives === 1 && /pause/.test(r1.btn), JSON.stringify(r1));
+    await p2.click('#btnPlay'); // pause
+    const paused = await readPlay();
+    check('real click on Play again pauses', !paused.playing && paused.actives === 0 && /play/.test(paused.btn), JSON.stringify(paused));
+    await p2.click('nav a[href="/dashboard"]');
+    await p2.waitForFunction(() => !document.getElementById('previewPanel'));
+    await p2.click('nav a[href="/video-editor"]');
+    await p2.waitForFunction(() => window.veditor && window.veditor.tl && document.querySelectorAll('.clip').length === 1);
+    await p2.click('#btnPlay');
+    await p2.waitForTimeout(1500);
+    const r2 = await readPlay();
+    check('project kept and Play works after switching menu pages', r2.playing && r2.t > paused.t + 1.0 && r2.px[2] > 100 && r2.actives === 1, JSON.stringify({ pausedAt: paused.t, r2 }));
+    await p2.keyboard.press('Space');
+    await p2.screenshot({ path: join(outDir, 'real-user.png') });
+    check('no page errors (real-user run)', errs2.length === 0, errs2.join(' ; ').slice(0, 500));
+  } catch (e) {
+    failures++; console.error('❌ real-user run crashed:', e);
+  } finally {
+    await b2.close();
+  }
+}
+server.close();
 console.log(`\n${results.filter((r) => r.ok).length}/${results.length} checks passed`);
 process.exit(failures ? 1 : 0);

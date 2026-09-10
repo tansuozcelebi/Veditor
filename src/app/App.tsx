@@ -1,7 +1,10 @@
 import { BrowserRouter, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { Clapperboard, LayoutDashboard, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { VideoEditor } from '@/features/video-editor';
+import { VideoEditor, createEditorSession } from '@/features/video-editor';
+
+// One session for the whole app: the project, media and playhead survive switching menu pages.
+const editorSession = createEditorSession();
 
 /**
  * Standalone shell that mimics a host application's sidebar menu (e.g. the WMS front-end):
@@ -20,7 +23,7 @@ export function App() {
         <div className="min-w-0 flex-1">
           <Routes>
             <Route path="/" element={<Navigate to="/video-editor" replace />} />
-            <Route path="/video-editor" element={<VideoEditor embedded />} />
+            <Route path="/video-editor" element={<VideoEditor embedded session={editorSession} />} />
             <Route path="/dashboard" element={<Placeholder title="Panel" />} />
             <Route path="/settings" element={<Placeholder title="Ayarlar" />} />
             <Route path="*" element={<Navigate to="/video-editor" replace />} />

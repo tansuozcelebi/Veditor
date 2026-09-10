@@ -12,8 +12,9 @@ export function Preview({ recording }: { recording?: boolean }) {
   const { time, playing } = usePlayerTime();
   useStoreEvents(['change']);
   const stageRef = useRef<HTMLDivElement>(null);
-  const [muted, setMuted] = useState(false);
-  const [volume, setVolume] = useState(1);
+  // monitor settings live on the player so they survive a remount of this panel
+  const [muted, setMuted] = useState(player.monitorMuted);
+  const [volume, setVolume] = useState(player.monitorVolume);
 
   useEffect(() => {
     const stage = stageRef.current!;

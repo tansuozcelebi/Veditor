@@ -52,7 +52,8 @@ export class Player extends Emitter {
     this.ctx2d = canvas.getContext('2d', { alpha: false })!;
     this.host = host;
     this._loop = this._loop.bind(this);
-    this.attach();
+    // attach() starts the render loop; the React provider (or play()) calls it, so an unused
+    // instance never leaks an animation-frame loop
   }
 
   /**
@@ -90,7 +91,7 @@ export class Player extends Emitter {
     if (ctx.state !== 'running') { try { await ctx.resume(); } catch { /* ignore */ } }
   }
   _applyMonitor() {
-    if (!this.monitorGain) return;
+    if (!this.monitorGain || !this.audio) return;
     const v = this.monitorMuted ? 0 : this.monitorVolume;
     this.monitorGain.gain.setTargetAtTime(v, this.audio!.currentTime, 0.01);
   }

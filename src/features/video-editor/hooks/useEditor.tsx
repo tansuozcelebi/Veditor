@@ -10,32 +10,58 @@ export interface EditorContextValue {
   exporter: Exporter;
   canvas: HTMLCanvasElement;
   host: HTMLElement;
+  /** Non-project UI state that should survive an unmount (e.g. leaving the editor's route). */
+  ui: { timelinePps: number | null; timelineScrollLeft: number };
+}
+
+/**
+ * An editor session owns the project (store), the playback engine and the export pipeline.
+ * It lives outside the React tree so that the project survives unmounting the editor
+ * (switching to another menu page in the host app) and is still there when the user comes back.
+ */
+export type EditorSession = EditorContextValue;
+
+export function createEditorSession(): EditorSession {
+  const store = new Store();
+  const canvas = document.createElement('canvas');
+  canvas.width = store.project.width; canvas.height = store.project.height;
+  const host = document.createElement('div');
+  host.className = 've-media-host';
+  host.setAttribute('aria-hidden', 'true');
+  const player = new Player(store, canvas, host);
+  const exporter = new Exporter(player, store);
+  return { store, player, exporter, canvas, host, ui: { timelinePps: null, timelineScrollLeft: 0 } };
+}
+
+let defaultSession: EditorSession | null = null;
+/** The session used by <VideoEditor> when no `session` prop is given; shared by every mount, so the project persists across route changes. */
+export function getDefaultEditorSession(): EditorSession {
+  if (!defaultSession) defaultSession = createEditorSession();
+  return defaultSession;
+}
+/** Drop the shared default session (e.g. on host logout) so the next mount starts with an empty project. */
+export function resetDefaultEditorSession() {
+  if (defaultSession) { defaultSession.player.destroy(); for (const id of [...defaultSession.store.media.keys()]) defaultSession.store.removeMedia(id); }
+  defaultSession = null;
 }
 
 const EditorContext = createContext<EditorContextValue | null>(null);
 
-/** Creates the engine once per mounted editor and exposes it to the component tree. */
-export function EditorProvider({ children, onReady }: { children: ReactNode; onReady?: (ctx: EditorContextValue) => void }) {
-  const [ctx] = useState<EditorContextValue>(() => {
-    const store = new Store();
-    const canvas = document.createElement('canvas');
-    canvas.width = store.project.width; canvas.height = store.project.height;
-    const host = document.createElement('div');
-    host.className = 've-media-host';
-    host.setAttribute('aria-hidden', 'true');
-    const player = new Player(store, canvas, host);
-    const exporter = new Exporter(player, store);
-    return { store, player, exporter, canvas, host };
-  });
+/**
+ * Mounts an editor session into the React tree. The engine is (re)attached on mount and detached
+ * on unmount, but the session itself (project, media, undo history, playhead) is kept, so React
+ * StrictMode's double effects and real route remounts both resume where they left off.
+ */
+export function EditorProvider({ children, session, onReady }: { children: ReactNode; session?: EditorSession; onReady?: (ctx: EditorContextValue) => void }) {
+  const [ctx] = useState<EditorContextValue>(() => session ?? getDefaultEditorSession());
   const readyRef = useRef(false);
   useEffect(() => {
     document.body.appendChild(ctx.host);
+    ctx.player.attach();
     if (!readyRef.current) { readyRef.current = true; onReady?.(ctx); }
-    return () => { ctx.host.remove(); };
+    return () => { ctx.player.destroy(); ctx.host.remove(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx]);
-  // StrictMode runs this cleanup and then the effect again on the same ctx, so re-attach on every run.
-  useEffect(() => { ctx.player.attach(); return () => ctx.player.destroy(); }, [ctx]);
   return <EditorContext.Provider value={ctx}>{children}</EditorContext.Provider>;
 }
 
