@@ -17,7 +17,10 @@
  *                              "false" = plain FTP, "implicit" = implicit FTPS          (default: true)
  *   SITEGROUND_SITE_URL        public URL of the deployed app; when set, the deploy is
  *                              verified over HTTP afterwards                             (optional)
+ *   SITEGROUND_VERIFY          strict (default: a failed check fails the deploy) | warn | off
  *   SITEGROUND_FTP_INSECURE_TLS  "true" skips TLS certificate validation (testing only)
+ *   VITE_BASE_PATH             (build time) URL path the app is served from, e.g. /veditor/ – only the path of
+ *                              a full URL is used; keep it unset when the app is at the site root
  *
  * Flags: --no-build  --dry-run  --no-prune  --verbose
  */
@@ -32,6 +35,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const distDir = join(root, 'dist');
 const args = new Set(process.argv.slice(2));
 const flags = { build: !args.has('--no-build'), dryRun: args.has('--dry-run'), prune: !args.has('--no-prune'), verbose: args.has('--verbose') };
+// Fetch like a browser: SiteGround's bot protection answers bare clients with a 202 challenge page.
+const BROWSER_HEADERS = { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36 veditor-deploy-check', accept: 'text/html,application/xhtml+xml,*/*;q=0.8', 'accept-language': 'tr,en;q=0.8', 'cache-control': 'no-cache', pragma: 'no-cache' };
 
 // ---------- configuration ----------
 loadDotEnv(join(root, '.env.deploy'));
@@ -44,6 +49,7 @@ const cfg = {
   secure: parseSecure(env('SITEGROUND_FTP_SECURE', 'true')),
   siteUrl: env('SITEGROUND_SITE_URL', '').replace(/\/+$/, ''),
   insecureTls: env('SITEGROUND_FTP_INSECURE_TLS', 'false') === 'true',
+  verify: env('SITEGROUND_VERIFY', 'strict').trim().toLowerCase(), // strict | warn | off
 };
 const missing = ['host', 'user', 'password'].filter((k) => !cfg[k]);
 if (missing.length) {
@@ -114,24 +120,35 @@ client.close();
 console.log(`✔ ${flags.dryRun ? 'Would upload' : 'Uploaded'} ${uploaded} files (${fmtBytes(uploadedBytes)}), ${flags.dryRun ? 'would remove' : 'removed'} ${pruned} stale asset(s) in ${((Date.now() - started) / 1000).toFixed(1)} s`);
 
 // ---------- verification over HTTP ----------
-if (cfg.siteUrl && !flags.dryRun) {
+if (cfg.siteUrl && !flags.dryRun && cfg.verify !== 'off') {
   console.log(`▶ Verifying ${cfg.siteUrl} …`);
   const html = readFileSync(join(distDir, 'index.html'), 'utf8');
   const assets = [...html.matchAll(/(?:src|href)="([^"]*\/assets\/[^"]+)"/g)].map((m) => m[1]);
-  const okIndex = await checkUrl(`${cfg.siteUrl}/?deploy-check=${Date.now()}`, (body) => assets.every((a) => body.includes(a)));
-  let okAssets = true;
+  let ok = true;
+  // 1. the start page references exactly this build's bundles
+  ok = (await checkUrl(`${cfg.siteUrl}/?deploy-check=${Date.now()}`, (body) => assets.every((a) => body.includes(a)), 'index.html does not reference the new bundles')) && ok;
+  // 2. every bundle is served byte-for-byte as built (also proves REMOTE_DIR maps to SITE_URL)
   for (const a of assets) {
     const url = new URL(a, cfg.siteUrl + '/').href; // absolute paths resolve against the origin, relative ones against the app URL
-    if (!(await checkUrl(url))) okAssets = false;
+    const local = readFileSync(join(distDir, decodeURIComponent(new URL(url).pathname.replace(/^.*\/assets\//, 'assets/'))));
+    ok = (await checkUrl(url, (body, buf) => buf.equals(local), `content differs from dist/ (${local.length} bytes locally)`)) && ok;
   }
-  const okRoute = await checkUrl(`${cfg.siteUrl}/video-editor?deploy-check=${Date.now()}`, (body) => /<div id="root">/.test(body));
-  if (okIndex && okAssets && okRoute) console.log('✔ Site serves the new build (index, assets and the /video-editor route)');
-  else { console.error('✖ Verification failed – the upload finished but the site does not serve the expected build (check SITEGROUND_REMOTE_DIR / SITEGROUND_SITE_URL / caching).'); process.exit(1); }
+  // 3. client-side routes fall back to index.html (the .htaccess rewrite is active)
+  ok = (await checkUrl(`${cfg.siteUrl}/video-editor?deploy-check=${Date.now()}`, (body) => body.includes('<div id="root">') && assets.every((a) => body.includes(a)), 'route is not rewritten to index.html')) && ok;
+  if (ok) console.log('✔ Site serves the new build (index, assets and the /video-editor route)');
+  else if (cfg.verify === 'warn') console.warn('⚠ Verification failed, but SITEGROUND_VERIFY=warn – the upload itself succeeded (check SITEGROUND_REMOTE_DIR / SITEGROUND_SITE_URL / caching / bot protection).');
+  else { console.error('✖ Verification failed – the upload finished but the site does not serve the expected build (check SITEGROUND_REMOTE_DIR / SITEGROUND_SITE_URL / caching / bot protection). Set SITEGROUND_VERIFY=warn to keep deploys green while you investigate.'); process.exit(1); }
 }
 
 // ---------- helpers ----------
 function env(name, def) { const v = process.env[name]; return v === undefined || v === '' ? def : v; }
-function parseSecure(v) { v = String(v).toLowerCase(); if (v === 'false' || v === '0' || v === 'no') return false; if (v === 'implicit') return 'implicit'; return true; }
+function parseSecure(v) {
+  const s = String(v).trim().toLowerCase();
+  if (s === 'false' || s === '0' || s === 'no') return false;
+  if (s === 'implicit') return 'implicit';
+  if (!['true', '1', 'yes', 'explicit', ''].includes(s)) console.warn(`  ⚠ SITEGROUND_FTP_SECURE="${v}" is not one of true | false | implicit – using explicit FTPS (true)`);
+  return true;
+}
 function loadDotEnv(file) {
   if (!existsSync(file)) return;
   for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
@@ -173,14 +190,22 @@ async function withRetry(what, fn, attempts = 3) {
     }
   }
 }
-async function checkUrl(url, test = () => true) {
-  try {
-    const res = await fetch(url, { headers: { 'cache-control': 'no-cache' }, redirect: 'follow' });
-    const body = await res.text();
-    const ok = res.ok && test(body);
-    console.log(`  ${ok ? '✔' : '✖'} ${res.status} ${url}`);
-    return ok;
-  } catch (e) { console.log(`  ✖ ${url} (${e?.message || e})`); return false; }
+// Accepts only a real 200 with the expected content; retries because caches/CDNs can lag right after an upload.
+async function checkUrl(url, test = () => true, why = 'unexpected content', attempts = 4) {
+  let last = '';
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      const res = await fetch(url, { headers: BROWSER_HEADERS, redirect: 'follow', signal: AbortSignal.timeout(20_000) });
+      const buf = Buffer.from(await res.arrayBuffer());
+      const body = buf.toString('utf8');
+      if (res.status === 200 && test(body, buf)) { console.log(`  ✔ 200 ${url}`); return true; }
+      last = res.status !== 200 ? `HTTP ${res.status}${res.status === 202 ? ' (challenge/interstitial page – bot protection?)' : ''}` : why;
+      if (flags.verbose) console.log(`    ↳ ${last}: ${body.replace(/\s+/g, ' ').slice(0, 160)}`);
+    } catch (e) { last = e?.name === 'TimeoutError' ? 'timed out' : (e?.message || String(e)); }
+    if (i < attempts) await new Promise((r) => setTimeout(r, 2000 * i));
+  }
+  console.log(`  ✖ ${url} – ${last}`);
+  return false;
 }
 // SNI needs a host name; an IP address is not allowed as servername
 function tlsOptions() { return { rejectUnauthorized: !cfg.insecureTls, ...(isIP(cfg.host) ? {} : { servername: cfg.host }) }; }
