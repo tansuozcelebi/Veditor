@@ -17,7 +17,8 @@
  *                              "false" = plain FTP, "implicit" = implicit FTPS          (default: true)
  *   SITEGROUND_SITE_URL        public URL of the deployed app; when set, the deploy is
  *                              verified over HTTP afterwards                             (optional)
- *   SITEGROUND_VERIFY          strict (default: a failed check fails the deploy) | warn | off
+ *   SITEGROUND_VERIFY          auto (default: a wrong/missing file fails the deploy, but a bot-protection
+ *                              challenge page only warns) | strict (any failure fails) | warn | off
  *   SITEGROUND_FTP_INSECURE_TLS  "true" skips TLS certificate validation (testing only)
  *   VITE_BASE_PATH             (build time) URL path the app is served from, e.g. /veditor/ – only the path of
  *                              a full URL is used; keep it unset when the app is at the site root
@@ -36,6 +37,8 @@ const distDir = join(root, 'dist');
 const args = new Set(process.argv.slice(2));
 const flags = { build: !args.has('--no-build'), dryRun: args.has('--dry-run'), prune: !args.has('--no-prune'), verbose: args.has('--verbose') };
 // Fetch like a browser: SiteGround's bot protection answers bare clients with a 202 challenge page.
+// statuses (with an HTML body) that mean "blocked by bot protection / interstitial", not "wrong deploy"
+const CHALLENGE_STATUSES = new Set([202, 403, 429, 503]);
 const BROWSER_HEADERS = { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36 veditor-deploy-check', accept: 'text/html,application/xhtml+xml,*/*;q=0.8', 'accept-language': 'tr,en;q=0.8', 'cache-control': 'no-cache', pragma: 'no-cache' };
 
 // ---------- configuration ----------
@@ -49,7 +52,7 @@ const cfg = {
   secure: parseSecure(env('SITEGROUND_FTP_SECURE', 'true')),
   siteUrl: env('SITEGROUND_SITE_URL', '').replace(/\/+$/, ''),
   insecureTls: env('SITEGROUND_FTP_INSECURE_TLS', 'false') === 'true',
-  verify: env('SITEGROUND_VERIFY', 'strict').trim().toLowerCase(), // strict | warn | off
+  verify: env('SITEGROUND_VERIFY', 'auto').trim().toLowerCase(), // auto | strict | warn | off
 };
 const missing = ['host', 'user', 'password'].filter((k) => !cfg[k]);
 if (missing.length) {
@@ -124,20 +127,29 @@ if (cfg.siteUrl && !flags.dryRun && cfg.verify !== 'off') {
   console.log(`▶ Verifying ${cfg.siteUrl} …`);
   const html = readFileSync(join(distDir, 'index.html'), 'utf8');
   const assets = [...html.matchAll(/(?:src|href)="([^"]*\/assets\/[^"]+)"/g)].map((m) => m[1]);
-  let ok = true;
+  const results = [];
   // 1. the start page references exactly this build's bundles
-  ok = (await checkUrl(`${cfg.siteUrl}/?deploy-check=${Date.now()}`, (body) => assets.every((a) => body.includes(a)), 'index.html does not reference the new bundles')) && ok;
+  results.push(await checkUrl(`${cfg.siteUrl}/?deploy-check=${Date.now()}`, (body) => assets.every((a) => body.includes(a)), 'index.html does not reference the new bundles'));
   // 2. every bundle is served byte-for-byte as built (also proves REMOTE_DIR maps to SITE_URL)
   for (const a of assets) {
     const url = new URL(a, cfg.siteUrl + '/').href; // absolute paths resolve against the origin, relative ones against the app URL
     const local = readFileSync(join(distDir, decodeURIComponent(new URL(url).pathname.replace(/^.*\/assets\//, 'assets/'))));
-    ok = (await checkUrl(url, (body, buf) => buf.equals(local), `content differs from dist/ (${local.length} bytes locally)`)) && ok;
+    results.push(await checkUrl(url, (body, buf) => buf.equals(local), `content differs from dist/ (${local.length} bytes locally)`));
   }
   // 3. client-side routes fall back to index.html (the .htaccess rewrite is active)
-  ok = (await checkUrl(`${cfg.siteUrl}/video-editor?deploy-check=${Date.now()}`, (body) => body.includes('<div id="root">') && assets.every((a) => body.includes(a)), 'route is not rewritten to index.html')) && ok;
-  if (ok) console.log('✔ Site serves the new build (index, assets and the /video-editor route)');
-  else if (cfg.verify === 'warn') console.warn('⚠ Verification failed, but SITEGROUND_VERIFY=warn – the upload itself succeeded (check SITEGROUND_REMOTE_DIR / SITEGROUND_SITE_URL / caching / bot protection).');
-  else { console.error('✖ Verification failed – the upload finished but the site does not serve the expected build (check SITEGROUND_REMOTE_DIR / SITEGROUND_SITE_URL / caching / bot protection). Set SITEGROUND_VERIFY=warn to keep deploys green while you investigate.'); process.exit(1); }
+  results.push(await checkUrl(`${cfg.siteUrl}/video-editor?deploy-check=${Date.now()}`, (body) => body.includes('<div id="root">') && assets.every((a) => body.includes(a)), 'route is not rewritten to index.html'));
+
+  const failed = results.filter((r) => !r.ok);
+  const blocked = failed.length > 0 && failed.every((r) => r.blocked);
+  if (!failed.length) console.log('✔ Site serves the new build (index, assets and the /video-editor route)');
+  else if (cfg.verify === 'warn' || (cfg.verify === 'auto' && blocked)) {
+    console.warn(blocked
+      ? '⚠ Could not verify: the site\'s bot protection answers automated requests with a challenge page (HTTP 202). The upload itself succeeded; open the site in a browser to confirm. (SITEGROUND_VERIFY=strict makes this fatal, =off skips the check.)'
+      : '⚠ Verification failed, but SITEGROUND_VERIFY=warn – the upload itself succeeded (check SITEGROUND_REMOTE_DIR / SITEGROUND_SITE_URL / caching).');
+  } else {
+    console.error('✖ Verification failed – the upload finished but the site does not serve the expected build (check SITEGROUND_REMOTE_DIR / SITEGROUND_SITE_URL / caching / bot protection). Set SITEGROUND_VERIFY=warn to keep deploys green while you investigate.');
+    process.exit(1);
+  }
 }
 
 // ---------- helpers ----------
@@ -191,21 +203,24 @@ async function withRetry(what, fn, attempts = 3) {
   }
 }
 // Accepts only a real 200 with the expected content; retries because caches/CDNs can lag right after an upload.
+// Returns { ok, blocked } – blocked = every attempt was answered by a bot-protection / interstitial page.
 async function checkUrl(url, test = () => true, why = 'unexpected content', attempts = 4) {
-  let last = '';
+  let last = '', blocked = true;
   for (let i = 1; i <= attempts; i++) {
     try {
       const res = await fetch(url, { headers: BROWSER_HEADERS, redirect: 'follow', signal: AbortSignal.timeout(20_000) });
       const buf = Buffer.from(await res.arrayBuffer());
       const body = buf.toString('utf8');
-      if (res.status === 200 && test(body, buf)) { console.log(`  ✔ 200 ${url}`); return true; }
-      last = res.status !== 200 ? `HTTP ${res.status}${res.status === 202 ? ' (challenge/interstitial page – bot protection?)' : ''}` : why;
+      if (res.status === 200 && test(body, buf)) { console.log(`  ✔ 200 ${url}`); return { ok: true, blocked: false }; }
+      const challenge = CHALLENGE_STATUSES.has(res.status) && /text\/html/i.test(res.headers.get('content-type') || '');
+      blocked = blocked && challenge;
+      last = res.status !== 200 ? `HTTP ${res.status}${challenge ? ' (challenge/interstitial page – bot protection?)' : ''}` : why;
       if (flags.verbose) console.log(`    ↳ ${last}: ${body.replace(/\s+/g, ' ').slice(0, 160)}`);
-    } catch (e) { last = e?.name === 'TimeoutError' ? 'timed out' : (e?.message || String(e)); }
+    } catch (e) { blocked = false; last = e?.name === 'TimeoutError' ? 'timed out' : (e?.message || String(e)); }
     if (i < attempts) await new Promise((r) => setTimeout(r, 2000 * i));
   }
   console.log(`  ✖ ${url} – ${last}`);
-  return false;
+  return { ok: false, blocked };
 }
 // SNI needs a host name; an IP address is not allowed as servername
 function tlsOptions() { return { rejectUnauthorized: !cfg.insecureTls, ...(isIP(cfg.host) ? {} : { servername: cfg.host }) }; }

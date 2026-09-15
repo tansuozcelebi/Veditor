@@ -101,7 +101,7 @@ jobs:
   #            SITEGROUND_SITE_URL (enables the post-deploy HTTP check),
   #            SITEGROUND_BASE_PATH (e.g. /veditor/ when deploying to a sub-folder),
   #            SITEGROUND_FTP_SECURE (true | false | implicit, default true),
-  #            SITEGROUND_VERIFY (strict | warn | off, default strict)
+  #            SITEGROUND_VERIFY (auto | strict | warn | off, default auto: a bot-protection challenge only warns)
   deploy:
     name: Deploy to SiteGround
     needs: test
