@@ -11,7 +11,9 @@
     "preview": "vite preview --port 8080",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
-    "test": "node test/smoke.test.mjs"
+    "test": "node test/smoke.test.mjs",
+    "deploy": "node scripts/deploy-siteground.mjs",
+    "deploy:dry": "node scripts/deploy-siteground.mjs --dry-run"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
@@ -31,6 +33,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "basic-ftp": "^6.2.1",
     "eslint": "^9.39.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.6",

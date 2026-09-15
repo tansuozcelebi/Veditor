@@ -12,7 +12,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # a running deploy must never be cancelled half-way; PR/branch runs can be
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
@@ -78,3 +79,59 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: gh pr merge "$PR_URL" --merge --delete-branch=false
+
+  # Continuous deployment: every commit that lands on main (merge or direct push) is built and
+  # uploaded to SiteGround over FTPS once the test job is green. Can also be started by hand.
+  # Secrets:   SITEGROUND_FTP_HOST, SITEGROUND_FTP_USER, SITEGROUND_FTP_PASSWORD,
+  #            SITEGROUND_REMOTE_DIR, SITEGROUND_FTP_PORT
+  # Variables: SITEGROUND_SITE_URL (optional, enables the post-deploy HTTP check),
+  #            SITEGROUND_BASE_PATH (optional, e.g. /veditor/ when deploying to a sub-folder),
+  #            SITEGROUND_FTP_SECURE (optional: true | false | implicit, default true)
+  deploy:
+    name: Deploy to SiteGround
+    needs: test
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-siteground
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for the site
+        env:
+          VITE_BASE_PATH: ${{ vars.SITEGROUND_BASE_PATH || '/' }}
+        run: npm run build
+
+      - name: Upload dist/ over FTPS
+        env:
+          SITEGROUND_FTP_HOST: ${{ secrets.SITEGROUND_FTP_HOST }}
+          SITEGROUND_FTP_USER: ${{ secrets.SITEGROUND_FTP_USER }}
+          SITEGROUND_FTP_PASSWORD: ${{ secrets.SITEGROUND_FTP_PASSWORD }}
+          SITEGROUND_REMOTE_DIR: ${{ secrets.SITEGROUND_REMOTE_DIR }}
+          SITEGROUND_FTP_PORT: ${{ secrets.SITEGROUND_FTP_PORT }}
+          SITEGROUND_FTP_SECURE: ${{ vars.SITEGROUND_FTP_SECURE }}
+          SITEGROUND_SITE_URL: ${{ vars.SITEGROUND_SITE_URL }}
+        run: node scripts/deploy-siteground.mjs --no-build
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed to SiteGround ✅"
+            echo ""
+            echo "- Commit: \`${GITHUB_SHA::7}\`"
+            echo "- Site: ${SITE_URL:-(SITEGROUND_SITE_URL variable not set)}"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SITE_URL: ${{ vars.SITEGROUND_SITE_URL }}

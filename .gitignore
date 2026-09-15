@@ -6,3 +6,4 @@ test/fixtures/*.webm
 test/fixtures/*.wav
 test/fixtures/*.png
 .DS_Store
+.env.deploy
