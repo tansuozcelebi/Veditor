@@ -73,6 +73,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      actions: write
     steps:
       - name: Merge the pull request
         env:
@@ -80,8 +81,20 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: gh pr merge "$PR_URL" --merge --delete-branch=false
 
-  # Continuous deployment: every commit that lands on main (merge or direct push) is built and
-  # uploaded to SiteGround over FTPS once the test job is green. Can also be started by hand.
+      # A merge made with GITHUB_TOKEN does not fire the `push` event (GitHub never lets one
+      # workflow run trigger another that way), so the main-branch run – tests + deploy – is
+      # started explicitly; workflow_dispatch is exempt from that rule.
+      - name: Start the main-branch run (test + deploy)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          sleep 10   # let the merge commit land on main before dispatching
+          gh workflow run ci.yml --ref main
+
+  # Continuous deployment: every commit that lands on main is built and uploaded to SiteGround
+  # over FTPS once the test job is green – on a direct push, on the run the automerge job
+  # dispatches after merging a PR, or when started by hand (Actions → CI → Run workflow).
   # Secrets:   SITEGROUND_FTP_HOST, SITEGROUND_FTP_USER, SITEGROUND_FTP_PASSWORD,
   #            SITEGROUND_REMOTE_DIR, SITEGROUND_FTP_PORT
   # Variables: SITEGROUND_SITE_URL (optional, enables the post-deploy HTTP check),
