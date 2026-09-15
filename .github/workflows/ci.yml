@@ -97,9 +97,10 @@ jobs:
   # dispatches after merging a PR, or when started by hand (Actions → CI → Run workflow).
   # Secrets:   SITEGROUND_FTP_HOST, SITEGROUND_FTP_USER, SITEGROUND_FTP_PASSWORD,
   #            SITEGROUND_REMOTE_DIR, SITEGROUND_FTP_PORT
-  # Variables: SITEGROUND_SITE_URL (optional, enables the post-deploy HTTP check),
-  #            SITEGROUND_BASE_PATH (optional, e.g. /veditor/ when deploying to a sub-folder),
-  #            SITEGROUND_FTP_SECURE (optional: true | false | implicit, default true)
+  # Optional (repository variable or secret, either works):
+  #            SITEGROUND_SITE_URL (enables the post-deploy HTTP check),
+  #            SITEGROUND_BASE_PATH (e.g. /veditor/ when deploying to a sub-folder),
+  #            SITEGROUND_FTP_SECURE (true | false | implicit, default true)
   deploy:
     name: Deploy to SiteGround
     needs: test
@@ -124,7 +125,7 @@ jobs:
 
       - name: Build for the site
         env:
-          VITE_BASE_PATH: ${{ vars.SITEGROUND_BASE_PATH || '/' }}
+          VITE_BASE_PATH: ${{ vars.SITEGROUND_BASE_PATH || secrets.SITEGROUND_BASE_PATH || '/' }}
         run: npm run build
 
       - name: Upload dist/ over FTPS
@@ -134,8 +135,8 @@ jobs:
           SITEGROUND_FTP_PASSWORD: ${{ secrets.SITEGROUND_FTP_PASSWORD }}
           SITEGROUND_REMOTE_DIR: ${{ secrets.SITEGROUND_REMOTE_DIR }}
           SITEGROUND_FTP_PORT: ${{ secrets.SITEGROUND_FTP_PORT }}
-          SITEGROUND_FTP_SECURE: ${{ vars.SITEGROUND_FTP_SECURE }}
-          SITEGROUND_SITE_URL: ${{ vars.SITEGROUND_SITE_URL }}
+          SITEGROUND_FTP_SECURE: ${{ vars.SITEGROUND_FTP_SECURE || secrets.SITEGROUND_FTP_SECURE }}
+          SITEGROUND_SITE_URL: ${{ vars.SITEGROUND_SITE_URL || secrets.SITEGROUND_SITE_URL }}
         run: node scripts/deploy-siteground.mjs --no-build
 
       - name: Summary
@@ -147,4 +148,4 @@ jobs:
             echo "- Site: ${SITE_URL:-(SITEGROUND_SITE_URL variable not set)}"
           } >> "$GITHUB_STEP_SUMMARY"
         env:
-          SITE_URL: ${{ vars.SITEGROUND_SITE_URL }}
+          SITE_URL: ${{ vars.SITEGROUND_SITE_URL || secrets.SITEGROUND_SITE_URL }}

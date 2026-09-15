@@ -220,7 +220,7 @@ secrets**:
 | `SITEGROUND_REMOTE_DIR` | Hedef klasör, örn. `public_html` ya da `public_html/veditor` (FTP hesabının kök dizinine göre) |
 | `SITEGROUND_FTP_PORT` | `21` (FTP / açık FTPS) |
 
-İsteğe bağlı **repository variables**: `SITEGROUND_SITE_URL` (yayın adresi; verilirse yükleme sonrası ana sayfa,
+İsteğe bağlı ayarlar (repository **variable** ya da **secret** olarak, ikisi de okunur): `SITEGROUND_SITE_URL` (yayın adresi; verilirse yükleme sonrası ana sayfa,
 `assets/` dosyaları ve `/video-editor` rotası HTTP ile doğrulanır), `SITEGROUND_BASE_PATH` (uygulama alt klasörde
 yayınlanıyorsa URL yolu, örn. `/veditor/`), `SITEGROUND_FTP_SECURE` (`true` = açık FTPS, `false` = düz FTP,
 `implicit` = örtük FTPS). İş elle de başlatılabilir (Actions → CI → Run workflow).
