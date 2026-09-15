@@ -12,7 +12,7 @@ const editorSession = createEditorSession();
  */
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
       <div className="dark bg-background text-foreground flex h-screen w-screen overflow-hidden">
         <nav className="bg-sidebar text-sidebar-foreground flex w-14 shrink-0 flex-col items-center gap-1 border-r py-3" aria-label="Menü">
           <div className="mb-2 flex size-9 items-center justify-center rounded-md bg-red-600 font-bold text-white" title="Veditor">V</div>

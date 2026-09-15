@@ -28,7 +28,7 @@ export default tseslint.config(
   },
   { files: ['src/features/**/hooks/**', 'src/features/**/index.ts', 'src/components/ui/**'], rules: { 'react-refresh/only-export-components': 'off' } },
   {
-    files: ['test/**/*.mjs', 'vite.config.ts'],
+    files: ['test/**/*.mjs', 'scripts/**/*.mjs', 'vite.config.ts'],
     extends: [js.configs.recommended],
     languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.node, ...globals.browser } },
   },

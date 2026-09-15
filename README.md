@@ -201,6 +201,44 @@ Bu yüzden iş akışında CI'ya bağlı bir `automerge` işi vardır: **`autome
 pull request, test işi yeşil olur olmaz merge commit ile `main` dalına birleştirilir. Etiketi kaldırmak veya PR'ı
 taslağa çevirmek otomatik birleştirmeyi durdurur.
 
+## Yayınlama (SiteGround'a dağıtım)
+
+Uygulama statik bir derlemedir (`dist/`); SiteGround'a **FTPS** ile yüklenir. Tek bir dağıtım betiği hem yerelde hem
+CI'da kullanılır: `scripts/deploy-siteground.mjs`.
+
+### Otomatik: her commit'te
+
+`main` dalına düşen her commit (auto-merge dahil) `.github/workflows/ci.yml` içindeki **Deploy to SiteGround** işini
+tetikler: lint + derleme + uçtan uca test yeşil olduktan sonra uygulama derlenir ve yüklenir. Gerekli **repository
+secrets**:
+
+| Secret | Açıklama |
+| --- | --- |
+| `SITEGROUND_FTP_HOST` | FTP sunucu adresi (Site Tools → Site → FTP Accounts'ta gösterilir) |
+| `SITEGROUND_FTP_USER` | FTP kullanıcı adı |
+| `SITEGROUND_FTP_PASSWORD` | FTP parolası |
+| `SITEGROUND_REMOTE_DIR` | Hedef klasör, örn. `public_html` ya da `public_html/veditor` (FTP hesabının kök dizinine göre) |
+| `SITEGROUND_FTP_PORT` | `21` (FTP / açık FTPS) |
+
+İsteğe bağlı **repository variables**: `SITEGROUND_SITE_URL` (yayın adresi; verilirse yükleme sonrası ana sayfa,
+`assets/` dosyaları ve `/video-editor` rotası HTTP ile doğrulanır), `SITEGROUND_BASE_PATH` (uygulama alt klasörde
+yayınlanıyorsa URL yolu, örn. `/veditor/`), `SITEGROUND_FTP_SECURE` (`true` = açık FTPS, `false` = düz FTP,
+`implicit` = örtük FTPS). İş elle de başlatılabilir (Actions → CI → Run workflow).
+
+### Elle: `npm run deploy`
+
+```bash
+cp .env.deploy.example .env.deploy   # değerleri doldurun (.env.deploy git'e girmez)
+npm run deploy:dry                   # derler, nelerin yükleneceğini/silineceğini gösterir, değişiklik yapmaz
+npm run deploy                       # derler ve yükler
+```
+
+Betik `dist/` içeriğini yükler (önce varlıklar, en son `index.html`; böylece ziyaretçi eksik varlığa işaret eden bir
+sayfa görmez), `assets/` altında artık kullanılmayan eski paketleri siler (`--no-prune` ile kapatılır), geçici ağ
+hatalarında yeniden dener ve `SITEGROUND_SITE_URL` verilmişse yayını HTTP üzerinden doğrular. Derlemeyle birlikte
+gelen `public/.htaccess` SPA yönlendirmesini (`/video-editor` → `index.html`), önbellek başlıklarını ve MIME
+türlerini ayarlar; hedef klasör bu uygulamaya ayrılmış olmalıdır.
+
 ## Sınırlamalar
 
 - Dışa aktarma gerçek zamanlıdır (MediaRecorder); arka plandaki sekmelerde kare üretimi durur.
