@@ -222,8 +222,9 @@ secrets**:
 
 İsteğe bağlı ayarlar (repository **variable** ya da **secret** olarak, ikisi de okunur): `SITEGROUND_SITE_URL` (yayın adresi; verilirse yükleme sonrası ana sayfa,
 `assets/` dosyaları ve `/video-editor` rotası HTTP ile doğrulanır), `SITEGROUND_BASE_PATH` (uygulama alt klasörde
-yayınlanıyorsa URL yolu, örn. `/veditor/`), `SITEGROUND_FTP_SECURE` (`true` = açık FTPS, `false` = düz FTP,
-`implicit` = örtük FTPS). İş elle de başlatılabilir (Actions → CI → Run workflow).
+yayınlanıyorsa URL **yolu**, örn. `/veditor/`; site kökündeyse hiç eklemeyin, tam adres yazılırsa yalnızca yol kısmı
+kullanılır), `SITEGROUND_FTP_SECURE` (`true` = açık FTPS, varsayılan; `false` = düz FTP; `implicit` = örtük FTPS),
+`SITEGROUND_VERIFY` (`strict` = doğrulama başarısızsa iş kırmızı, varsayılan; `warn` = yalnızca uyar; `off`). İş elle de başlatılabilir (Actions → CI → Run workflow).
 
 ### Elle: `npm run deploy`
 

@@ -100,7 +100,8 @@ jobs:
   # Optional (repository variable or secret, either works):
   #            SITEGROUND_SITE_URL (enables the post-deploy HTTP check),
   #            SITEGROUND_BASE_PATH (e.g. /veditor/ when deploying to a sub-folder),
-  #            SITEGROUND_FTP_SECURE (true | false | implicit, default true)
+  #            SITEGROUND_FTP_SECURE (true | false | implicit, default true),
+  #            SITEGROUND_VERIFY (strict | warn | off, default strict)
   deploy:
     name: Deploy to SiteGround
     needs: test
@@ -137,6 +138,7 @@ jobs:
           SITEGROUND_FTP_PORT: ${{ secrets.SITEGROUND_FTP_PORT }}
           SITEGROUND_FTP_SECURE: ${{ vars.SITEGROUND_FTP_SECURE || secrets.SITEGROUND_FTP_SECURE }}
           SITEGROUND_SITE_URL: ${{ vars.SITEGROUND_SITE_URL || secrets.SITEGROUND_SITE_URL }}
+          SITEGROUND_VERIFY: ${{ vars.SITEGROUND_VERIFY || secrets.SITEGROUND_VERIFY }}
         run: node scripts/deploy-siteground.mjs --no-build
 
       - name: Summary
