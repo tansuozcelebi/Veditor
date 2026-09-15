@@ -224,7 +224,8 @@ secrets**:
 `assets/` dosyaları ve `/video-editor` rotası HTTP ile doğrulanır), `SITEGROUND_BASE_PATH` (uygulama alt klasörde
 yayınlanıyorsa URL **yolu**, örn. `/veditor/`; site kökündeyse hiç eklemeyin, tam adres yazılırsa yalnızca yol kısmı
 kullanılır), `SITEGROUND_FTP_SECURE` (`true` = açık FTPS, varsayılan; `false` = düz FTP; `implicit` = örtük FTPS),
-`SITEGROUND_VERIFY` (`strict` = doğrulama başarısızsa iş kırmızı, varsayılan; `warn` = yalnızca uyar; `off`). İş elle de başlatılabilir (Actions → CI → Run workflow).
+`SITEGROUND_VERIFY` (`auto` = varsayılan: yanlış/eksik dosya işi kırmızı yapar, SiteGround bot korumasının 202 ara sayfası yalnızca
+uyarır; `strict` = her hata kırmızı; `warn` = yalnızca uyar; `off` = kontrol yok). İş elle de başlatılabilir (Actions → CI → Run workflow).
 
 ### Elle: `npm run deploy`
 
