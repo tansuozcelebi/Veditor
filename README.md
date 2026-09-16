@@ -201,27 +201,38 @@ Bu yüzden iş akışında CI'ya bağlı bir `automerge` işi vardır: **`autome
 pull request, test işi yeşil olur olmaz merge commit ile `main` dalına birleştirilir. Etiketi kaldırmak veya PR'ı
 taslağa çevirmek otomatik birleştirmeyi durdurur.
 
-## Desteklenen dosyalar ve içe aktarma sorunları
+## Desteklenen dosyalar (tüm kodekler)
 
-İçe aktarma tamamen tarayıcıda yapılır: bir dosyanın açılabilmesi için **tarayıcının o kodeği çözebilmesi** gerekir.
+Tarayıcılar yalnızca kendi derlemelerinde bulunan kodekleri açar: telifli kodekler olmadan derlenmiş Chromium
+sürümleri **H.264/AAC** dosyalarını (telefon ve WhatsApp videolarının neredeyse tamamı) reddeder, HEVC/H.265,
+ProRes, DivX ve WMV'yi ise hiçbir tarayıcı açmaz. Veditor bu boşluğu kendi kodek setiyle kapatır: tarayıcı bir
+dosyayı çözemezse dosya **ffmpeg.wasm** ile (açık kaynak, `@ffmpeg/core`) WebM'e (VP8 + Vorbis) dönüştürülür ve
+öyle eklenir. Kullanıcı yalnızca bir ilerleme bildirimi görür; başka bir işlem yapması gerekmez.
 
-| Tür | Sorunsuz çalışanlar | Tarayıcının açamadıkları |
+| Tür | Doğrudan açılanlar | Otomatik dönüştürülenler |
 | --- | --- | --- |
-| Video | MP4 / MOV (H.264 + AAC), WebM (VP8/VP9/AV1), MKV (VP8/VP9) | HEVC / H.265 (birçok iPhone kaydı), ProRes, AVI (DivX/Xvid), WMV, FLV, MPEG-2 (.mts/.m2ts) |
-| Ses | MP3, WAV, M4A/AAC, OGG/Opus, FLAC | WMA, AC3, AMR |
-| Görsel | PNG, JPEG, GIF, WebP, AVIF, SVG | HEIC/HEIF (Safari dışında) |
+| Video | WebM (VP8/VP9/AV1), MP4/MOV (H.264 + AAC, tarayıcı destekliyorsa) | H.264/AAC (desteklenmiyorsa), HEVC/H.265, ProRes, MPEG-2 (.mts/.m2ts), AVI/DivX, WMV, FLV, 3GP, VOB, MXF |
+| Ses | MP3, WAV, M4A/AAC, OGG/Opus, FLAC | WMA, AC3, AMR, AIFF, CAF |
+| Görsel | PNG, JPEG, GIF, WebP, AVIF, SVG | — (HEIC/HEIF dönüştürülmez) |
 
-Dosya türü MIME tipinden, uzantıdan ya da (ikisi de yoksa) dosyanın ilk baytlarından belirlenir; bu yüzden uzantısız
-veya kameradan gelen alışılmadık adlı dosyalar da tanınır. Bir dosya açılamazsa bildirim **nedenini** söyler:
+**Nasıl çalışır**
 
-- *“tarayıcı bu videonun kodeğini açamıyor”* → dosyayı MP4 (H.264) ya da WebM'e dönüştürüp tekrar deneyin
-  (`ffmpeg -i girdi.mov -c:v libx264 -c:a aac cikti.mp4`).
-- *“süre doldu”* → çok büyük dosya; zaman aşımı dosya boyutuna göre uzar (en fazla 3 dk), tekrar deneyin.
-- *“dosya okunamadı”* → dosya taşınmış, silinmiş veya bozuk.
-- *“desteklenmeyen dosya türü”* → içerik video/ses/görsel olarak tanınamadı.
+- Kodek çekirdeği (`ffmpeg-core.js` + `ffmpeg-core.wasm`, ~31 MB) derleme sırasında `node_modules`'tan
+  `public/ffmpeg/` altına kopyalanır (`scripts/copy-ffmpeg-core.mjs`, `npm run build`/`dev` öncesinde otomatik
+  çalışır) ve sitenin kendi alan adından sunulur. Dosya yoksa unpkg/jsDelivr'a düşülür.
+- Çekirdek yalnızca ilk dönüştürmede indirilir, sonra tarayıcı önbelleğinde kalır; hiç dönüştürme gerekmezse
+  hiç indirilmez.
+- Dönüştürme tek iş parçacıklı WebAssembly'de çalışır: kabaca gerçek zamanın 0,5–1 katı hızında ilerler
+  (6 saniyelik klip ≈ 4 saniye). Görüntü en fazla 1080p'ye ölçeklenir.
+- Dosya türü MIME tipinden, uzantıdan ya da (ikisi de yoksa) dosyanın ilk baytlarından belirlenir; uzantısız
+  kamera dosyaları da tanınır.
+- Dönüştürme de başarısız olursa bildirim nedenini söyler (bozuk dosya, okunamadı, süre doldu). 400 MB'tan büyük
+  dosyalarda dalga formu çizilmez; klip yine de normal kullanılır.
 
-400 MB'tan büyük dosyalarda dalga formu çizilmez (tüm dosyanın belleğe açılması gerekirdi); klip yine de normal
-şekilde kullanılır. Küçük resim veya dalga formu üretilemese bile dosya kitaplıkta kalır.
+> Lisans notu: `@ffmpeg/core` **GPL-2.0-or-later** ile dağıtılır ve bir worker içinde ayrı bir program olarak
+> (ffmpeg komut satırı aracını çağırmak gibi) çalıştırılır; Veditor'un kendi kodu MIT olarak kalır. GPL
+> istemeyen bir dağıtım için `public/ffmpeg/` klasörünü boş bırakıp dönüştürmeyi devre dışı bırakabilir ya da
+> LGPL bir derleme (ör. libav.js) kullanabilirsiniz.
 
 ## Yayınlama (SiteGround'a dağıtım)
 

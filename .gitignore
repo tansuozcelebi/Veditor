@@ -7,3 +7,5 @@ test/fixtures/*.wav
 test/fixtures/*.png
 .DS_Store
 .env.deploy
+public/ffmpeg/
+test/fixtures/*.mp4

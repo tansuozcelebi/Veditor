@@ -13,9 +13,15 @@
     "lint": "eslint .",
     "test": "node test/smoke.test.mjs",
     "deploy": "node scripts/deploy-siteground.mjs",
-    "deploy:dry": "node scripts/deploy-siteground.mjs --dry-run"
+    "deploy:dry": "node scripts/deploy-siteground.mjs --dry-run",
+    "prebuild": "node scripts/copy-ffmpeg-core.mjs",
+    "predev": "node scripts/copy-ffmpeg-core.mjs",
+    "prestart": "node scripts/copy-ffmpeg-core.mjs"
   },
   "dependencies": {
+    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.41.0",

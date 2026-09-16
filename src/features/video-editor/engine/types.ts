@@ -38,6 +38,9 @@ export interface MediaItem {
   image?: HTMLImageElement; hasAudio?: boolean; recorded?: boolean;
   /** Waveform was not computed because the file is too large to decode in memory. */
   peaksSkipped?: boolean;
+  /** The file was converted with ffmpeg.wasm because the browser could not decode the original. */
+  transcoded?: boolean;
+  originalType?: string;
 }
 
 export interface MediaSummary { id: string; name: string; kind: MediaKind; duration: number; width: number; height: number; size: number; type: string }

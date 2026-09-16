@@ -14,6 +14,7 @@ import { RecordDialog } from './RecordDialog';
 import { OpenProjectDialog } from './OpenProjectDialog';
 import { TEXT_DEFAULT_DURATION, formatTime, uid } from '../engine/state';
 import { supportedFormats } from '../engine/exporter';
+import { loadFFmpeg, runFFmpeg, transcodeToPlayable } from '../engine/transcode';
 import type { Timeline } from '../engine/timeline';
 import type { Clip, ExportResult, MediaItem, ProjectFile, Track } from '../engine/types';
 import { cn } from '@/lib/utils';
@@ -196,7 +197,7 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
 
   // ---------- debug / test handle ----------
   useEffect(() => {
-    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats };
+    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable } };
     return () => { delete (window as any).veditor; };
   }, [store, player, exporter, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, importFiles]);
 

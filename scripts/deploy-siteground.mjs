@@ -80,7 +80,7 @@ console.log(`▶ ${localFiles.length} files (${fmtBytes(totalBytes)}) in dist/ �
 const started = Date.now();
 const client = new Client(60_000);
 client.ftp.verbose = flags.verbose;
-let uploaded = 0, uploadedBytes = 0, pruned = 0;
+let uploaded = 0, uploadedBytes = 0, pruned = 0, skipped = 0;
 try {
   await withRetry('connect', () => client.access({
     host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password,
@@ -94,9 +94,17 @@ try {
   const localSet = new Set(localFiles.map((f) => f.rel));
   const stale = remoteAssets.filter((rel) => !localSet.has(rel));
 
+  // assets/ and ffmpeg/ hold content-addressed or version-pinned files: same name + same size means
+  // the server already has this exact file, so skip it (the codec core alone is ~31 MB).
+  const remoteSizes = new Map();
+  for (const dir of ['assets', 'ffmpeg']) {
+    try { for (const e of await client.list(posix.join(remoteRoot, dir))) if (e.isFile) remoteSizes.set(posix.join(dir, e.name), e.size); } catch { /* not there yet */ }
+  }
+
   let lastDir = '';
   for (const f of localFiles) {
     const dir = posix.dirname(f.rel);
+    if (remoteSizes.get(f.rel) === f.size) { skipped++; if (flags.verbose) console.log(`  = ${f.rel} (unchanged)`); continue; }
     if (flags.dryRun) { console.log(`  ↑ ${f.rel} (${fmtBytes(f.size)})`); uploaded++; uploadedBytes += f.size; continue; }
     await withRetry(`upload ${f.rel}`, async () => {
       if (client.closed) await reconnect();
@@ -120,7 +128,7 @@ try {
   process.exit(1);
 }
 client.close();
-console.log(`✔ ${flags.dryRun ? 'Would upload' : 'Uploaded'} ${uploaded} files (${fmtBytes(uploadedBytes)}), ${flags.dryRun ? 'would remove' : 'removed'} ${pruned} stale asset(s) in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+console.log(`✔ ${flags.dryRun ? 'Would upload' : 'Uploaded'} ${uploaded} files (${fmtBytes(uploadedBytes)})${skipped ? `, skipped ${skipped} unchanged` : ''}, ${flags.dryRun ? 'would remove' : 'removed'} ${pruned} stale asset(s) in ${((Date.now() - started) / 1000).toFixed(1)} s`);
 
 // ---------- verification over HTTP ----------
 if (cfg.siteUrl && !flags.dryRun && cfg.verify !== 'off') {
