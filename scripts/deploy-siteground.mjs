@@ -134,6 +134,8 @@ console.log(`✔ ${flags.dryRun ? 'Would upload' : 'Uploaded'} ${uploaded} files
 if (cfg.siteUrl && !flags.dryRun && cfg.verify !== 'off') {
   console.log(`▶ Verifying ${cfg.siteUrl} …`);
   const html = readFileSync(join(distDir, 'index.html'), 'utf8');
+  const baseMatch = html.match(/(?:src|href)="([^"]*)\/assets\//); // '' at the site root, '/sub-folder' otherwise
+  const base = (baseMatch ? baseMatch[1] : '').replace(/^https?:\/\/[^/]+/, '') + '/';
   const assets = [...html.matchAll(/(?:src|href)="([^"]*\/assets\/[^"]+)"/g)].map((m) => m[1]);
   const results = [];
   // 1. the start page references exactly this build's bundles
@@ -146,6 +148,13 @@ if (cfg.siteUrl && !flags.dryRun && cfg.verify !== 'off') {
   }
   // 3. client-side routes fall back to index.html (the .htaccess rewrite is active)
   results.push(await checkUrl(`${cfg.siteUrl}/video-editor?deploy-check=${Date.now()}`, (body) => body.includes('<div id="root">') && assets.every((a) => body.includes(a)), 'route is not rewritten to index.html'));
+
+  // 4. the ffmpeg.wasm codec core is served (conversions of H.264/HEVC/AVI … depend on it)
+  for (const name of ['ffmpeg-core.js', 'ffmpeg-core.wasm']) {
+    const local = join(distDir, 'ffmpeg', name);
+    if (!existsSync(local)) continue;
+    results.push(await checkRange(new URL(`${base}ffmpeg/${name}`, cfg.siteUrl + '/').href, statSync(local).size));
+  }
 
   const failed = results.filter((r) => !r.ok);
   const blocked = failed.length > 0 && failed.every((r) => r.blocked);
@@ -232,4 +241,33 @@ async function checkUrl(url, test = () => true, why = 'unexpected content', atte
 }
 // SNI needs a host name; an IP address is not allowed as servername
 function tlsOptions() { return { rejectUnauthorized: !cfg.insecureTls, ...(isIP(cfg.host) ? {} : { servername: cfg.host }) }; }
+/**
+ * Checks a large file without downloading it. The failure that matters is a missing file: our own
+ * SPA rewrite would answer with index.html, so an HTML body means "not deployed", and when the server
+ * reports a length it must match the build.
+ */
+async function checkRange(url, expectedSize, attempts = 3) {
+  let last = '';
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      const res = await fetch(url, { headers: { ...BROWSER_HEADERS, range: 'bytes=0-1023' }, redirect: 'follow', signal: AbortSignal.timeout(20_000) });
+      const type = res.headers.get('content-type') || '';
+      const range = res.headers.get('content-range');
+      const len = range ? Number(range.split('/')[1]) : (res.headers.get('content-length') ? Number(res.headers.get('content-length')) : null);
+      const served = (res.status === 200 || res.status === 206) && !/text\/html/i.test(type);
+      if (served && (len === null || len === expectedSize || (res.status === 200 && !range && len === expectedSize))) {
+        console.log(`  ✔ ${res.status} ${url}${len ? ` (${fmtBytes(len)})` : ''}`);
+        return { ok: true, blocked: false };
+      }
+      const challenge = CHALLENGE_STATUSES.has(res.status) && /text\/html/i.test(type);
+      last = res.status !== 200 && res.status !== 206 ? `HTTP ${res.status}${challenge ? ' (challenge/interstitial page – bot protection?)' : ''}`
+        : /text\/html/i.test(type) ? 'served as HTML – the file is missing and the SPA rewrite answered instead'
+        : `server reports ${len} bytes, the build has ${expectedSize}`;
+      if (i === attempts) { console.log(`  ✖ ${url} – ${last}`); return { ok: false, blocked: challenge }; }
+    } catch (e) { last = e?.message || String(e); }
+    await new Promise((r) => setTimeout(r, 2000 * i));
+  }
+  console.log(`  ✖ ${url} – ${last}`);
+  return { ok: false, blocked: false };
+}
 function fmtBytes(n) { return n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(2)} MB`; }
