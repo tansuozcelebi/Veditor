@@ -56,6 +56,29 @@ try {
   check('tone metadata', byName['tone.wav'].kind === 'audio' && approx(byName['tone.wav'].duration, 5, 0.05) && byName['tone.wav'].peaks > 100);
   check('image metadata', byName['logo.png'].kind === 'image' && byName['logo.png'].w === 200 && byName['logo.png'].duration === 5);
 
+  // ---- awkward real-world files: no extension / no MIME type, and a file the browser cannot decode ----
+  const odd = {
+    noExtVideo: join(outDir, 'camera-clip'),            // valid video bytes, no extension → must be sniffed
+    noExtAudio: join(outDir, 'recording'),              // valid audio bytes, no extension
+    broken: join(outDir, 'undecodable.mp4'),            // looks like video, cannot be decoded (like HEVC in a browser without it)
+  };
+  writeFileSync(odd.noExtVideo, readFileSync(join(fixtures, 'clipA.webm')));
+  writeFileSync(odd.noExtAudio, readFileSync(join(fixtures, 'tone.wav')));
+  writeFileSync(odd.broken, Buffer.alloc(300000, 7));
+  await page.setInputFiles('#fileInput', [odd.noExtVideo, odd.noExtAudio]);
+  await page.waitForFunction(() => window.veditor.store.media.size === 6, null, { timeout: 30000 }).catch(() => null);
+  const sniffed = await page.evaluate(() => [...window.veditor.store.media.values()].filter((m) => ['camera-clip', 'recording'].includes(m.name)).map((m) => ({ name: m.name, kind: m.kind, duration: m.duration })));
+  check('files without an extension are detected from their content', sniffed.length === 2 && sniffed.find((m) => m.name === 'camera-clip')?.kind === 'video' && sniffed.find((m) => m.name === 'recording')?.kind === 'audio', JSON.stringify(sniffed));
+
+  const beforeBroken = await page.evaluate(() => window.veditor.store.media.size);
+  await page.setInputFiles('#fileInput', odd.broken);
+  await page.waitForTimeout(3000);
+  const brokenOutcome = await page.evaluate(() => ({ n: window.veditor.store.media.size, toasts: [...document.querySelectorAll('[data-sonner-toast]')].map((t) => t.textContent) }));
+  const codecToast = brokenOutcome.toasts.find((t) => t.includes('undecodable.mp4'));
+  check('an undecodable file is rejected with a reason, not a generic error', brokenOutcome.n === beforeBroken && !!codecToast && /kode|codec/i.test(codecToast), JSON.stringify({ added: brokenOutcome.n - beforeBroken, toast: (codecToast || '').slice(0, 90) }));
+  await page.waitForFunction(() => document.querySelectorAll('[data-sonner-toast]').length === 0, null, { timeout: 15000 }).catch(() => null); // let the toasts dismiss themselves; removing them by hand corrupts React's tree
+  await page.evaluate(() => { const { store } = window.veditor; for (const m of [...store.media.values()]) if (['camera-clip', 'recording'].includes(m.name)) store.removeMedia(m.id); }); // back to the four fixtures for the rest of the run
+
   // ---- place on timeline ----
   const placed = await page.evaluate(() => {
     const { store, addMediaToTimeline } = window.veditor;

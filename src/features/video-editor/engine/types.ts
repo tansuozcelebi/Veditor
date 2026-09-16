@@ -36,6 +36,8 @@ export interface MediaItem {
   duration: number; width: number; height: number;
   thumbnails: Thumbnail[]; peaks: Float32Array | null; poster: string | null; analyzing: boolean;
   image?: HTMLImageElement; hasAudio?: boolean; recorded?: boolean;
+  /** Waveform was not computed because the file is too large to decode in memory. */
+  peaksSkipped?: boolean;
 }
 
 export interface MediaSummary { id: string; name: string; kind: MediaKind; duration: number; width: number; height: number; size: number; type: string }
