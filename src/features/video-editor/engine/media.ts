@@ -1,6 +1,7 @@
 // ===================== Media import & analysis (metadata, thumbnails, waveforms) =====================
 import { uid, IMAGE_DEFAULT_DURATION, type Store } from './state';
 import type { MediaItem, MediaKind, Thumbnail } from './types';
+import { transcodeToPlayable, type TranscodeProgress } from './transcode';
 
 const THUMB_COUNT = 12;
 /** Above this file size the waveform is skipped: decoding it would need the entire file in memory. */
@@ -200,12 +201,46 @@ export async function generatePeaks(m: MediaItem): Promise<Float32Array | null> 
   return peaks;
 }
 
+/** A file the browser refused to decode can still be rescued by converting it with ffmpeg.wasm. */
+const RECOVERABLE: ImportFailReason[] = ['codec', 'decode'];
+
+export interface ImportHooks {
+  onMedia?: (m: MediaItem) => void;
+  onError?: (file: File, e: Error) => void;
+  /** Called while a file is being converted because the browser cannot decode it; `null` means finished. */
+  onTranscode?: (file: File, progress: TranscodeProgress | null) => void;
+  /** Cancels a running conversion. */
+  signal?: AbortSignal;
+}
+
 /** Full import pipeline: metadata → add to store → background analysis. */
-export async function importFiles(store: Store, files: File[], { onMedia, onError }: { onMedia?: (m: MediaItem) => void; onError?: (file: File, e: Error) => void } = {}): Promise<MediaItem[]> {
+export async function importFiles(store: Store, files: File[], { onMedia, onError, onTranscode, signal }: ImportHooks = {}): Promise<MediaItem[]> {
   const added: MediaItem[] = [];
   for (const file of files) {
     try {
-      const m = await loadMedia(file);
+      let m: MediaItem;
+      try {
+        m = await loadMedia(file);
+      } catch (e) {
+        const reason = e instanceof MediaImportError ? e.reason : null;
+        if (!reason || !RECOVERABLE.includes(reason)) throw e;
+        // The browser lacks this codec (H.264/AAC in builds without proprietary codecs, HEVC, ProRes,
+        // DivX, WMV …). Convert the file to WebM with our own ffmpeg build and import that instead.
+        onTranscode?.(file, { ratio: 0, stage: 'loading' });
+        let converted: File;
+        try {
+          converted = await transcodeToPlayable(file, { onProgress: (p) => onTranscode?.(file, p), signal });
+        } catch (te) {
+          console.warn('transcode failed', file.name, te);
+          throw e; // report the original codec problem, not the converter's
+        } finally {
+          onTranscode?.(file, null);
+        }
+        m = await loadMedia(converted);
+        m.name = file.name;       // keep the name the user knows
+        m.transcoded = true;
+        m.originalType = file.type || undefined;
+      }
       store.addMedia(m);
       added.push(m);
       onMedia && onMedia(m);

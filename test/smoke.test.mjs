@@ -75,9 +75,32 @@ try {
   await page.waitForTimeout(3000);
   const brokenOutcome = await page.evaluate(() => ({ n: window.veditor.store.media.size, toasts: [...document.querySelectorAll('[data-sonner-toast]')].map((t) => t.textContent) }));
   const codecToast = brokenOutcome.toasts.find((t) => t.includes('undecodable.mp4'));
-  check('an undecodable file is rejected with a reason, not a generic error', brokenOutcome.n === beforeBroken && !!codecToast && /kode|codec/i.test(codecToast), JSON.stringify({ added: brokenOutcome.n - beforeBroken, toast: (codecToast || '').slice(0, 90) }));
+  check('an undecodable file is rejected with a reason, not a generic error', brokenOutcome.n === beforeBroken && !!codecToast && /(kode|codec|dönüştür|convert)/i.test(codecToast), JSON.stringify({ added: brokenOutcome.n - beforeBroken, toast: (codecToast || '').slice(0, 100) }));
   await page.waitForFunction(() => document.querySelectorAll('[data-sonner-toast]').length === 0, null, { timeout: 15000 }).catch(() => null); // let the toasts dismiss themselves; removing them by hand corrupts React's tree
   await page.evaluate(() => { const { store } = window.veditor; for (const m of [...store.media.values()]) if (['camera-clip', 'recording'].includes(m.name)) store.removeMedia(m.id); }); // back to the four fixtures for the rest of the run
+
+  // ---- codec fallback: a file this browser cannot decode is converted with the bundled ffmpeg.wasm ----
+  // The fixtures are VP8/Opus because that is what a browser can produce; an H.264/AAC MP4 (what phones
+  // and WhatsApp hand out) is made here with the same ffmpeg core, then imported like a user's file.
+  const nativeH264 = await page.evaluate(() => document.createElement('video').canPlayType('video/mp4; codecs="avc1.42E01E"'));
+  const mp4Path = join(outDir, 'phone-clip.mp4');
+  const mp4Bytes = await page.evaluate(async (bytes) => {
+    const src = new File([new Uint8Array(bytes)], 'clipA.webm', { type: 'video/webm' });
+    const out = await window.veditor.ffmpeg.runFFmpeg(src, ['-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k'], 'out.mp4', { type: 'video/mp4' });
+    return [...new Uint8Array(await out.arrayBuffer())];
+  }, [...readFileSync(join(fixtures, 'clipA.webm'))]);
+  writeFileSync(mp4Path, Buffer.from(mp4Bytes));
+  check('ffmpeg.wasm core runs in the browser', mp4Bytes.length > 50000, `${mp4Bytes.length} bytes of H.264/AAC, native support: ${nativeH264 || 'none'}`);
+
+  const mediaBefore = await page.evaluate(() => window.veditor.store.media.size);
+  await page.setInputFiles('#fileInput', mp4Path);
+  await page.waitForFunction((n) => window.veditor.store.media.size === n + 1, mediaBefore, { timeout: 180000 });
+  await page.waitForFunction(() => [...window.veditor.store.media.values()].every((m) => !m.analyzing), null, { timeout: 120000 });
+  const imported = await page.evaluate(() => { const m = [...window.veditor.store.media.values()].find((x) => x.name === 'phone-clip.mp4'); return { kind: m.kind, duration: +m.duration.toFixed(2), w: m.width, h: m.height, transcoded: !!m.transcoded, thumbs: m.thumbnails.length, peaks: m.peaks ? m.peaks.length : 0, hasAudio: m.hasAudio }; });
+  check('an H.264 file imports (converted when the browser lacks the codec)',
+    imported.kind === 'video' && approx(imported.duration, 6, 0.3) && imported.w === 640 && imported.thumbs >= 4 && imported.peaks > 100 && imported.hasAudio === true && (nativeH264 ? true : imported.transcoded),
+    JSON.stringify(imported));
+  await page.evaluate(() => { const { store } = window.veditor; const m = [...store.media.values()].find((x) => x.name === 'phone-clip.mp4'); store.removeMedia(m.id); });
 
   // ---- place on timeline ----
   const placed = await page.evaluate(() => {
