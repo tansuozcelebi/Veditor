@@ -396,6 +396,37 @@ try {
     await b2.close();
   }
 }
+// ---- a restrictive Content-Security-Policy must be reported, not mistaken for broken files ----
+{
+  const cspServer = http.createServer((req, res) => {
+    let p = join(dist, decodeURIComponent(req.url.split('?')[0]));
+    if (!existsSync(p) || statSync(p).isDirectory()) p = join(dist, 'index.html');
+    res.writeHead(200, {
+      'content-type': MIME[extname(p)] || 'application/octet-stream',
+      'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'", // what hosting panels install by default
+    });
+    res.end(readFileSync(p));
+  }).listen(0);
+  const cspBase = `http://127.0.0.1:${cspServer.address().port}`;
+  const b3 = await chromium.launch({ channel: 'chromium' });
+  const p3 = await b3.newPage({ viewport: { width: 1400, height: 900 }, locale: 'tr-TR' });
+  try {
+    await p3.goto(cspBase + '/video-editor');
+    await p3.waitForFunction(() => window.veditor && window.veditor.tl, null, { timeout: 30000 });
+    await p3.setInputFiles('#fileInput', join(fixtures, 'clipA.webm'));
+    await p3.waitForFunction(() => [...document.querySelectorAll('[data-sonner-toast]')].some((t) => /CSP/i.test(t.textContent)), null, { timeout: 30000 }).catch(() => null);
+    const state = await p3.evaluate(() => ({ media: window.veditor.store.media.size, toasts: [...document.querySelectorAll('[data-sonner-toast]')].map((t) => t.textContent) }));
+    const cspToasts = state.toasts.filter((t) => /CSP/i.test(t));
+    check('a blocking Content-Security-Policy is explained instead of looking like a broken file',
+      state.media === 0 && cspToasts.length >= 1 && cspToasts.some((t) => /blob:/.test(t)),
+      JSON.stringify({ media: state.media, toast: (cspToasts[0] || state.toasts[0] || '').slice(0, 110) }));
+  } catch (e) {
+    failures++; console.error('❌ CSP run crashed:', e);
+  } finally {
+    await b3.close(); cspServer.close();
+  }
+}
+
 server.close();
 console.log(`\n${results.filter((r) => r.ok).length}/${results.length} checks passed`);
 process.exit(failures ? 1 : 0);

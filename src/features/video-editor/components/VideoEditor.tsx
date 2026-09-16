@@ -15,6 +15,7 @@ import { OpenProjectDialog } from './OpenProjectDialog';
 import { TEXT_DEFAULT_DURATION, formatTime, uid } from '../engine/state';
 import { supportedFormats } from '../engine/exporter';
 import { loadFFmpeg, runFFmpeg, transcodeToPlayable } from '../engine/transcode';
+import { cspViolations, isLocalMediaBlock, onCspViolation } from '../engine/csp';
 import type { Timeline } from '../engine/timeline';
 import type { Clip, ExportResult, MediaItem, ProjectFile, Track } from '../engine/types';
 import { cn } from '@/lib/utils';
@@ -154,6 +155,20 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
   }, [importFiles, store, addMediaToTimeline, t]);
 
   const removeMedia = useCallback((m: MediaItem) => { if (window.confirm(t('library.removeConfirm'))) store.removeMedia(m.id); }, [store, t]);
+
+  // ---------- security policy ----------
+  // A page served with a restrictive Content-Security-Policy silently breaks local playback; tell the
+  // user once, with the directive to fix, instead of letting every file look broken.
+  useEffect(() => {
+    let warned = false;
+    const warn = () => {
+      if (warned) return;
+      warned = true;
+      toast.error(t('app.cspBlocked'), { duration: Infinity, id: 'csp' });
+    };
+    if (cspViolations().some(isLocalMediaBlock)) warn();
+    return onCspViolation((b) => { if (isLocalMediaBlock(b)) warn(); });
+  }, [t]);
 
   // ---------- keyboard shortcuts (scoped to the editor root) ----------
   useEffect(() => {

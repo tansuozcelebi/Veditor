@@ -1,6 +1,7 @@
 import { toast } from 'sonner';
 import { useEditor, useI18n } from './useEditor';
 import { importFiles, MediaImportError } from '../engine/media';
+import { cspBlocksLocalMedia } from '../engine/csp';
 import type { MediaItem } from '../engine/types';
 
 /** Imports files into the media library, converting codecs the browser cannot decode, with localized toasts. */
@@ -25,8 +26,11 @@ export function useImportFiles() {
       },
       onError: (file, e) => {
         const reason = e instanceof MediaImportError ? e.reason : null;
-        const key = reason === 'unsupported' ? 'library.unsupported' : reason ? `library.err.${reason}` : 'library.loadError';
-        toast.error(t(key, { name: file.name }), { duration: 8000 });
+        // A blocked blob: URL surfaces as a codec error; say what really happened.
+        const key = cspBlocksLocalMedia() ? 'library.err.csp'
+          : reason === 'unsupported' ? 'library.unsupported'
+          : reason ? `library.err.${reason}` : 'library.loadError';
+        toast.error(t(key, { name: file.name }), { duration: 12000 });
       },
     });
     const convertedCount = added.filter((m) => m.transcoded).length;

@@ -156,6 +156,11 @@ if (cfg.siteUrl && !flags.dryRun && cfg.verify !== 'off') {
     results.push(await checkRange(new URL(`${base}ffmpeg/${name}`, cfg.siteUrl + '/').href, statSync(local).size));
   }
 
+  // 5. the security policy the server actually sends must allow local playback; hosting panels and
+  //    proxies like to install a bare "default-src 'self'", which breaks every file the user opens
+  const cspProbe = assets.length ? new URL(assets[0], cfg.siteUrl + '/').href : cfg.siteUrl + '/'; // an asset answers reliably even when bot protection challenges the HTML
+  results.push(await checkCsp(cspProbe));
+
   const failed = results.filter((r) => !r.ok);
   const blocked = failed.length > 0 && failed.every((r) => r.blocked);
   if (!failed.length) console.log('✔ Site serves the new build (index, assets and the /video-editor route)');
@@ -268,6 +273,26 @@ async function checkRange(url, expectedSize, attempts = 3) {
     await new Promise((r) => setTimeout(r, 2000 * i));
   }
   console.log(`  ✖ ${url} – ${last}`);
+  return { ok: false, blocked: false };
+}
+/** Reads the Content-Security-Policy the server sends and checks that the editor can still work under it. */
+async function checkCsp(url) {
+  let res;
+  try { res = await fetch(url, { headers: BROWSER_HEADERS, redirect: 'follow', signal: AbortSignal.timeout(20_000) }); }
+  catch (e) { console.log(`  ✖ CSP check failed – ${e?.message || e}`); return { ok: false, blocked: false }; }
+  const csp = res.headers.get('content-security-policy');
+  if (!csp) { console.log('  ✔ no Content-Security-Policy header (nothing restricts local playback)'); return { ok: true, blocked: false }; }
+  const directives = Object.fromEntries(csp.split(';').map((d) => d.trim().split(/\s+/)).filter((d) => d[0]).map(([name, ...values]) => [name.toLowerCase(), values.map((v) => v.toLowerCase())]));
+  const allows = (name, token) => (directives[name] || directives['default-src'] || []).includes(token);
+  const missing = [];
+  if (!allows('media-src', 'blob:')) missing.push('media-src blob:');
+  if (!allows('img-src', 'blob:') || !allows('img-src', 'data:')) missing.push('img-src blob: data:');
+  if (!allows('worker-src', 'blob:') && !allows('child-src', 'blob:') && !allows('script-src', 'blob:')) missing.push('worker-src blob:');
+  if (!allows('script-src', "'wasm-unsafe-eval'") && !allows('script-src', "'unsafe-eval'")) missing.push("script-src 'wasm-unsafe-eval'");
+  if (!missing.length) { console.log('  ✔ Content-Security-Policy allows local media, workers and WebAssembly'); return { ok: true, blocked: false }; }
+  console.log(`  ✖ Content-Security-Policy blocks the editor – missing: ${missing.join(', ')}`);
+  console.log(`    served policy: ${csp.slice(0, 300)}`);
+  console.log('    the .htaccess in this build sets a working policy; if it still appears, the header is added after Apache (CDN/proxy or the hosting panel) and must be changed there');
   return { ok: false, blocked: false };
 }
 function fmtBytes(n) { return n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(2)} MB`; }

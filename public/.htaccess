@@ -23,6 +23,13 @@
   </FilesMatch>
   Header always set X-Content-Type-Options "nosniff"
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+  # Content Security Policy. The editor works entirely on local files, so it needs what a normal
+  # page does not: blob: URLs for the media elements and the ffmpeg.wasm worker, data: URLs for the
+  # thumbnails it paints from the canvas, and 'wasm-unsafe-eval' to compile the codec core. Hosting
+  # panels often install a bare "default-src 'self'" that blocks all of it; this replaces it.
+  # (Header set overrides a value set higher up in the server configuration.)
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://static.cloudflareinsights.com; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data:; font-src 'self' data:; connect-src 'self' blob: data: https://static.cloudflareinsights.com https://unpkg.com https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'; form-action 'self'"
 </IfModule>
 
 # Correct MIME types for module scripts and media

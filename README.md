@@ -229,6 +229,22 @@ dosyayı çözemezse dosya **ffmpeg.wasm** ile (açık kaynak, `@ffmpeg/core`) W
 - Dönüştürme de başarısız olursa bildirim nedenini söyler (bozuk dosya, okunamadı, süre doldu). 400 MB'tan büyük
   dosyalarda dalga formu çizilmez; klip yine de normal kullanılır.
 
+### Güvenlik politikası (CSP)
+
+Editör yerel dosyaları `blob:` adresleriyle oynatır, küçük resimleri `data:` olarak üretir ve kodek çekirdeğini
+WebAssembly ile derler. Barındırma panellerinin sıkça eklediği `default-src 'self'` gibi dar bir
+**Content-Security-Policy** bunların hepsini engeller ve hata mesajları dosya bozukmuş gibi görünür. Derlemeyle
+giden `.htaccess` çalışan bir politika yazar (Apache'de `Header set`, üst düzeyde tanımlı başlığı değiştirir):
+
+```
+media-src 'self' blob: data:      img-src 'self' data: blob:
+worker-src 'self' blob:           script-src ... 'wasm-unsafe-eval' blob:
+```
+
+Politika yine de engelliyorsa başlık Apache'den **sonra** ekleniyordur (CDN/proxy ya da barındırma paneli); o
+zaman oradan düzeltilmelidir. Uygulama bu durumu tanır ve "sitenin güvenlik politikası engelliyor" uyarısını
+gösterir; her dağıtımdan sonra sunucunun gönderdiği CSP başlığı ayrıca denetlenir.
+
 > Lisans notu: `@ffmpeg/core` **GPL-2.0-or-later** ile dağıtılır ve bir worker içinde ayrı bir program olarak
 > (ffmpeg komut satırı aracını çağırmak gibi) çalıştırılır; Veditor'un kendi kodu MIT olarak kalır. GPL
 > istemeyen bir dağıtım için `public/ffmpeg/` klasörünü boş bırakıp dönüştürmeyi devre dışı bırakabilir ya da
