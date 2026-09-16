@@ -15,10 +15,15 @@ import { OpenProjectDialog } from './OpenProjectDialog';
 import { TEXT_DEFAULT_DURATION, formatTime, uid } from '../engine/state';
 import { supportedFormats } from '../engine/exporter';
 import { loadFFmpeg, runFFmpeg, transcodeToPlayable } from '../engine/transcode';
+import { cspViolations, isLocalMediaBlock, onCspViolation } from '../engine/csp';
+import { diagnostics, log, logDiagnostics } from '../engine/diagnostics';
 import type { Timeline } from '../engine/timeline';
 import type { Clip, ExportResult, MediaItem, ProjectFile, Track } from '../engine/types';
 import { cn } from '@/lib/utils';
 import '../editor.css';
+
+/** Same origin as the app, so the report says whether this deployment ships its own codec core. */
+const CODEC_CORE_URL = `${import.meta.env.BASE_URL}ffmpeg/ffmpeg-core.js`;
 
 export interface VideoEditorProps {
   /** Hide the Veditor brand in the top bar (when the host app already has a header/menu). */
@@ -155,6 +160,25 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
 
   const removeMedia = useCallback((m: MediaItem) => { if (window.confirm(t('library.removeConfirm'))) store.removeMedia(m.id); }, [store, t]);
 
+  // ---------- environment report ----------
+  // Imports happen entirely in the browser, so the console is where a failure can be understood:
+  // print what this browser can decode and whether the page allows local files at all.
+  useEffect(() => { void logDiagnostics(CODEC_CORE_URL); }, []);
+
+  // ---------- security policy ----------
+  // A page served with a restrictive Content-Security-Policy silently breaks local playback; tell the
+  // user once, with the directive to fix, instead of letting every file look broken.
+  useEffect(() => {
+    let warned = false;
+    const warn = () => {
+      if (warned) return;
+      warned = true;
+      toast.error(t('app.cspBlocked'), { duration: Infinity, id: 'csp' });
+    };
+    if (cspViolations().some(isLocalMediaBlock)) warn();
+    return onCspViolation((b) => { if (isLocalMediaBlock(b)) warn(); });
+  }, [t]);
+
   // ---------- keyboard shortcuts (scoped to the editor root) ----------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -197,7 +221,8 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
 
   // ---------- debug / test handle ----------
   useEffect(() => {
-    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable } };
+    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable }, diagnostics: () => logDiagnostics(CODEC_CORE_URL), rawDiagnostics: () => diagnostics(CODEC_CORE_URL) };
+    log('debug handle ready – window.veditor (diagnostics(), store, player, importFiles …)');
     return () => { delete (window as any).veditor; };
   }, [store, player, exporter, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, importFiles]);
 

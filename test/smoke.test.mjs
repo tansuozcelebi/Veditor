@@ -37,7 +37,8 @@ const context = await browser.newContext({ viewport: { width: 1600, height: 950 
 const page = await context.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+const consoleLines = [];
+page.on('console', (m) => { consoleLines.push(`${m.type()} ${m.text()}`); if (m.type() === 'error') errors.push('console: ' + m.text()); });
 
 try {
   await page.goto(base + '/video-editor');
@@ -55,6 +56,12 @@ try {
   check('clipB metadata', byName['clipB.webm'].kind === 'video' && approx(byName['clipB.webm'].duration, 4, 0.2));
   check('tone metadata', byName['tone.wav'].kind === 'audio' && approx(byName['tone.wav'].duration, 5, 0.05) && byName['tone.wav'].peaks > 100);
   check('image metadata', byName['logo.png'].kind === 'image' && byName['logo.png'].w === 200 && byName['logo.png'].duration === 5);
+
+  // ---- console diagnostics: an import must be explainable from the browser console alone ----
+  const traceLines = consoleLines.filter((l) => /\[veditor\]|detected kind|metadata read/.test(l));
+  check('the console reports the environment and each import step',
+    traceLines.some((l) => /environment/.test(l)) && traceLines.some((l) => /blob: playback|detected kind/.test(l)) && consoleLines.some((l) => /detected kind/.test(l)) && consoleLines.some((l) => /metadata read/.test(l)),
+    JSON.stringify(traceLines.slice(0, 3).map((l) => l.replace(/%c/g, '').slice(0, 60))));
 
   // ---- awkward real-world files: no extension / no MIME type, and a file the browser cannot decode ----
   const odd = {
@@ -396,6 +403,37 @@ try {
     await b2.close();
   }
 }
+// ---- a restrictive Content-Security-Policy must be reported, not mistaken for broken files ----
+{
+  const cspServer = http.createServer((req, res) => {
+    let p = join(dist, decodeURIComponent(req.url.split('?')[0]));
+    if (!existsSync(p) || statSync(p).isDirectory()) p = join(dist, 'index.html');
+    res.writeHead(200, {
+      'content-type': MIME[extname(p)] || 'application/octet-stream',
+      'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'", // what hosting panels install by default
+    });
+    res.end(readFileSync(p));
+  }).listen(0);
+  const cspBase = `http://127.0.0.1:${cspServer.address().port}`;
+  const b3 = await chromium.launch({ channel: 'chromium' });
+  const p3 = await b3.newPage({ viewport: { width: 1400, height: 900 }, locale: 'tr-TR' });
+  try {
+    await p3.goto(cspBase + '/video-editor');
+    await p3.waitForFunction(() => window.veditor && window.veditor.tl, null, { timeout: 30000 });
+    await p3.setInputFiles('#fileInput', join(fixtures, 'clipA.webm'));
+    await p3.waitForFunction(() => [...document.querySelectorAll('[data-sonner-toast]')].some((t) => /CSP/i.test(t.textContent)), null, { timeout: 30000 }).catch(() => null);
+    const state = await p3.evaluate(() => ({ media: window.veditor.store.media.size, toasts: [...document.querySelectorAll('[data-sonner-toast]')].map((t) => t.textContent) }));
+    const cspToasts = state.toasts.filter((t) => /CSP/i.test(t));
+    check('a blocking Content-Security-Policy is explained instead of looking like a broken file',
+      state.media === 0 && cspToasts.length >= 1 && cspToasts.some((t) => /blob:/.test(t)),
+      JSON.stringify({ media: state.media, toast: (cspToasts[0] || state.toasts[0] || '').slice(0, 110) }));
+  } catch (e) {
+    failures++; console.error('❌ CSP run crashed:', e);
+  } finally {
+    await b3.close(); cspServer.close();
+  }
+}
+
 server.close();
 console.log(`\n${results.filter((r) => r.ok).length}/${results.length} checks passed`);
 process.exit(failures ? 1 : 0);

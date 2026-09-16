@@ -2,6 +2,7 @@
 import { uid, IMAGE_DEFAULT_DURATION, type Store } from './state';
 import type { MediaItem, MediaKind, Thumbnail } from './types';
 import { transcodeToPlayable, type TranscodeProgress } from './transcode';
+import { log, trace } from './diagnostics';
 
 const THUMB_COUNT = 12;
 /** Above this file size the waveform is skipped: decoding it would need the entire file in memory. */
@@ -102,8 +103,10 @@ async function ensureFiniteDuration(el: HTMLMediaElement): Promise<number> {
 }
 
 /** Load basic metadata; returns media object (without thumbnails / peaks yet). */
-export async function loadMedia(file: File): Promise<MediaItem> {
-  const kind = kindOfFile(file) ?? await sniffKind(file);
+export async function loadMedia(file: File, tr?: ReturnType<typeof trace>): Promise<MediaItem> {
+  const declared = kindOfFile(file);
+  const kind = declared ?? await sniffKind(file);
+  tr?.step('detected kind', { kind, from: declared ? (file.type ? 'mime type' : 'extension') : 'file header', mime: file.type || '(none)', size: file.size });
   if (!kind) throw new MediaImportError('unsupported', file.type || file.name);
   const url = URL.createObjectURL(file);
   const m: MediaItem = { id: uid(), name: file.name, kind, file, url, size: file.size, type: file.type, duration: 0, width: 0, height: 0, thumbnails: [], peaks: null, poster: null, analyzing: true };
@@ -124,9 +127,11 @@ export async function loadMedia(file: File): Promise<MediaItem> {
         await once(el, 'loadedmetadata', { timeout: metadataTimeout(file.size) });
       } catch (e) {
         // the element knows why it gave up – surface that instead of a generic failure
+        tr?.step('the browser refused the file', { code: el.error?.code, message: el.error?.message || String(e), timeoutMs: metadataTimeout(file.size) });
         throw el.error ? mediaElementError(el) : (e as Error);
       }
       m.duration = await ensureFiniteDuration(el);
+      tr?.step('metadata read', { duration: +m.duration.toFixed(3), width: el.videoWidth, height: el.videoHeight });
       // A few containers report their picture size only once the first frame is decoded; give a file that
       // claims to be video a moment before concluding that it is audio-only.
       if (!el.videoWidth && kind === 'video') await once(el, 'loadeddata', { timeout: 4000 }).catch(() => {});
@@ -217,32 +222,46 @@ export interface ImportHooks {
 export async function importFiles(store: Store, files: File[], { onMedia, onError, onTranscode, signal }: ImportHooks = {}): Promise<MediaItem[]> {
   const added: MediaItem[] = [];
   for (const file of files) {
+    const tr = trace(file.name);
     try {
       let m: MediaItem;
       try {
-        m = await loadMedia(file);
+        m = await loadMedia(file, tr);
       } catch (e) {
         const reason = e instanceof MediaImportError ? e.reason : null;
+        tr.step('import failed, deciding whether to convert', { reason, recoverable: !!reason && RECOVERABLE.includes(reason) });
         if (!reason || !RECOVERABLE.includes(reason)) throw e;
         // The browser lacks this codec (H.264/AAC in builds without proprietary codecs, HEVC, ProRes,
         // DivX, WMV …). Convert the file to WebM with our own ffmpeg build and import that instead.
         onTranscode?.(file, { ratio: 0, stage: 'loading' });
+        tr.step('converting with ffmpeg.wasm');
         let converted: File;
+        let lastRatio = -1;
         try {
-          converted = await transcodeToPlayable(file, { onProgress: (p) => onTranscode?.(file, p), signal });
+          converted = await transcodeToPlayable(file, {
+            onProgress: (p) => {
+              onTranscode?.(file, p);
+              const pct = Math.floor(p.ratio * 10) / 10;
+              if (p.stage === 'converting' && pct > lastRatio) { lastRatio = pct; tr.step(`converting ${Math.round(p.ratio * 100)}%`); }
+            },
+            signal,
+          });
+          tr.step('converted', { from: file.type || '(unknown)', to: 'video/webm', bytes: converted.size });
         } catch (te) {
+          tr.step('conversion failed', te);
           console.warn('transcode failed', file.name, te);
           throw e; // report the original codec problem, not the converter's
         } finally {
           onTranscode?.(file, null);
         }
-        m = await loadMedia(converted);
+        m = await loadMedia(converted, tr);
         m.name = file.name;       // keep the name the user knows
         m.transcoded = true;
         m.originalType = file.type || undefined;
       }
       store.addMedia(m);
       added.push(m);
+      tr.end(true, { kind: m.kind, duration: +m.duration.toFixed(3), width: m.width, height: m.height, transcoded: !!m.transcoded });
       onMedia && onMedia(m);
       // background analysis (don't block UI)
       (async () => {
@@ -253,13 +272,13 @@ export async function importFiles(store: Store, files: File[], { onMedia, onErro
           console.warn('analysis failed', m.name, e); // the clip stays usable without thumbnails / waveform
         } finally {
           m.analyzing = false;
+          log(`analysed ${m.name}`, { thumbnails: m.thumbnails.length, waveformPoints: m.peaks ? m.peaks.length : 0, hasAudio: m.hasAudio, waveformSkipped: !!m.peaksSkipped });
           store.emit('media');
           store.emit('mediaAnalyzed', m);
         }
       })();
     } catch (e) {
-      // reported to the caller (and through it to the user); a warning keeps the console honest about severity
-      console.warn('import failed', file.name, e);
+      tr.end(false, e);
       onError && onError(file, e as Error);
     }
   }
