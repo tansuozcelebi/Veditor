@@ -229,6 +229,21 @@ dosyayı çözemezse dosya **ffmpeg.wasm** ile (açık kaynak, `@ffmpeg/core`) W
 - Dönüştürme de başarısız olursa bildirim nedenini söyler (bozuk dosya, okunamadı, süre doldu). 400 MB'tan büyük
   dosyalarda dalga formu çizilmez; klip yine de normal kullanılır.
 
+### Konsol tanılaması
+
+Her içe aktarma tarayıcıda olup bittiği için hata ayıklama bilgisi konsola yazılır (F12 → Console):
+
+- Açılışta bir **ortam raporu**: tarayıcının çözebildiği kodekler tablosu, `blob:` oynatmanın çalışıp
+  çalışmadığı, WebAssembly desteği, kodek çekirdeğine erişilip erişilemediği ve o ana kadarki CSP ihlalleri.
+- Her dosya için adım adım **içe aktarma izi**: türün nasıl belirlendiği (MIME / uzantı / dosya başlığı),
+  metadata sonucu, tarayıcı reddettiyse `MediaError` kodu ve mesajı, dönüştürme kararı, dönüştürme ilerlemesi
+  ve sonucu, küçük resim / dalga formu sayıları. Başarısız içe aktarmalar katlanmamış bir grup olarak açılır.
+- `window.veditor.diagnostics()` ile ortam raporunu istediğiniz an tekrar alabilirsiniz;
+  `window.veditor` ayrıca `store`, `player`, `importFiles` ve `ffmpeg` yardımcılarını da verir.
+
+Bir dosya açılmıyorsa konsoldaki `[veditor] import ✖ …` grubu nedeni doğrudan gösterir: kodek desteği yok,
+dosya bozuk, süre doldu ya da sayfanın güvenlik politikası engelliyor.
+
 ### Güvenlik politikası (CSP)
 
 Editör yerel dosyaları `blob:` adresleriyle oynatır, küçük resimleri `data:` olarak üretir ve kodek çekirdeğini
