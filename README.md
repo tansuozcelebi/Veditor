@@ -221,7 +221,7 @@ dosyayı çözemezse dosya **ffmpeg.wasm** ile (açık kaynak, `@ffmpeg/core`) W
   `public/ffmpeg/` altına kopyalanır (`scripts/copy-ffmpeg-core.mjs`, `npm run build`/`dev` öncesinde otomatik
   çalışır) ve sitenin kendi alan adından sunulur. Dosya yoksa unpkg/jsDelivr'a düşülür.
 - Çekirdek yalnızca ilk dönüştürmede indirilir, sonra tarayıcı önbelleğinde kalır; hiç dönüştürme gerekmezse
-  hiç indirilmez.
+  hiç indirilmez. Her dağıtımdan sonra çekirdeğin sitede gerçekten sunulduğu HTTP ile denetlenir.
 - Dönüştürme tek iş parçacıklı WebAssembly'de çalışır: kabaca gerçek zamanın 0,5–1 katı hızında ilerler
   (6 saniyelik klip ≈ 4 saniye). Görüntü en fazla 1080p'ye ölçeklenir.
 - Dosya türü MIME tipinden, uzantıdan ya da (ikisi de yoksa) dosyanın ilk baytlarından belirlenir; uzantısız
