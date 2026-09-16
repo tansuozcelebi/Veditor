@@ -201,6 +201,28 @@ Bu yüzden iş akışında CI'ya bağlı bir `automerge` işi vardır: **`autome
 pull request, test işi yeşil olur olmaz merge commit ile `main` dalına birleştirilir. Etiketi kaldırmak veya PR'ı
 taslağa çevirmek otomatik birleştirmeyi durdurur.
 
+## Desteklenen dosyalar ve içe aktarma sorunları
+
+İçe aktarma tamamen tarayıcıda yapılır: bir dosyanın açılabilmesi için **tarayıcının o kodeği çözebilmesi** gerekir.
+
+| Tür | Sorunsuz çalışanlar | Tarayıcının açamadıkları |
+| --- | --- | --- |
+| Video | MP4 / MOV (H.264 + AAC), WebM (VP8/VP9/AV1), MKV (VP8/VP9) | HEVC / H.265 (birçok iPhone kaydı), ProRes, AVI (DivX/Xvid), WMV, FLV, MPEG-2 (.mts/.m2ts) |
+| Ses | MP3, WAV, M4A/AAC, OGG/Opus, FLAC | WMA, AC3, AMR |
+| Görsel | PNG, JPEG, GIF, WebP, AVIF, SVG | HEIC/HEIF (Safari dışında) |
+
+Dosya türü MIME tipinden, uzantıdan ya da (ikisi de yoksa) dosyanın ilk baytlarından belirlenir; bu yüzden uzantısız
+veya kameradan gelen alışılmadık adlı dosyalar da tanınır. Bir dosya açılamazsa bildirim **nedenini** söyler:
+
+- *“tarayıcı bu videonun kodeğini açamıyor”* → dosyayı MP4 (H.264) ya da WebM'e dönüştürüp tekrar deneyin
+  (`ffmpeg -i girdi.mov -c:v libx264 -c:a aac cikti.mp4`).
+- *“süre doldu”* → çok büyük dosya; zaman aşımı dosya boyutuna göre uzar (en fazla 3 dk), tekrar deneyin.
+- *“dosya okunamadı”* → dosya taşınmış, silinmiş veya bozuk.
+- *“desteklenmeyen dosya türü”* → içerik video/ses/görsel olarak tanınamadı.
+
+400 MB'tan büyük dosyalarda dalga formu çizilmez (tüm dosyanın belleğe açılması gerekirdi); klip yine de normal
+şekilde kullanılır. Küçük resim veya dalga formu üretilemese bile dosya kitaplıkta kalır.
+
 ## Yayınlama (SiteGround'a dağıtım)
 
 Uygulama statik bir derlemedir (`dist/`); SiteGround'a **FTPS** ile yüklenir. Tek bir dağıtım betiği hem yerelde hem

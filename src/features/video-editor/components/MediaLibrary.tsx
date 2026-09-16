@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { useEditor, useI18n, useStoreEvents } from '../hooks/useEditor';
 import { useImportFiles } from '../hooks/useImportFiles';
 import { formatBytes, formatDurationShort } from '../engine/state';
+import { ACCEPT_ATTRIBUTE } from '../engine/media';
 import type { MediaItem } from '../engine/types';
 import { cn } from '@/lib/utils';
 
@@ -34,7 +35,7 @@ export function MediaLibrary({ onAdd, onRecord, onDragStart, selectedId, onSelec
           <Button id="btnImport" size="xs" onClick={() => fileInput.current?.click()}><Plus /> {t('library.import')}</Button>
         </div>
       </div>
-      <input ref={fileInput} type="file" id="fileInput" multiple accept="video/*,audio/*,image/*" hidden onChange={(e) => { void importFilesFn([...(e.target.files || [])]); e.target.value = ''; }} />
+      <input ref={fileInput} type="file" id="fileInput" multiple accept={ACCEPT_ATTRIBUTE} hidden onChange={(e) => { void importFilesFn([...(e.target.files || [])]); e.target.value = ''; }} />
       <div
         id="libraryDrop"
         className={cn('relative flex-1 overflow-auto p-2.5', dragOver && 'drag-over')}
