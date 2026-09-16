@@ -158,8 +158,8 @@ if (cfg.siteUrl && !flags.dryRun && cfg.verify !== 'off') {
 
   // 5. the security policy the server actually sends must allow local playback; hosting panels and
   //    proxies like to install a bare "default-src 'self'", which breaks every file the user opens
-  const cspProbe = assets.length ? new URL(assets[0], cfg.siteUrl + '/').href : cfg.siteUrl + '/'; // an asset answers reliably even when bot protection challenges the HTML
-  results.push(await checkCsp(cspProbe));
+  // the policy is often attached to HTML only (header or an injected <meta>), so check the page itself
+  results.push(await checkCsp(`${cfg.siteUrl}/?csp-check=${Date.now()}`, assets.length ? new URL(assets[0], cfg.siteUrl + '/').href : null));
 
   const failed = results.filter((r) => !r.ok);
   const blocked = failed.length > 0 && failed.every((r) => r.blocked);
@@ -275,24 +275,49 @@ async function checkRange(url, expectedSize, attempts = 3) {
   console.log(`  ✖ ${url} – ${last}`);
   return { ok: false, blocked: false };
 }
-/** Reads the Content-Security-Policy the server sends and checks that the editor can still work under it. */
-async function checkCsp(url) {
-  let res;
-  try { res = await fetch(url, { headers: BROWSER_HEADERS, redirect: 'follow', signal: AbortSignal.timeout(20_000) }); }
-  catch (e) { console.log(`  ✖ CSP check failed – ${e?.message || e}`); return { ok: false, blocked: false }; }
-  const csp = res.headers.get('content-security-policy');
-  if (!csp) { console.log('  ✔ no Content-Security-Policy header (nothing restricts local playback)'); return { ok: true, blocked: false }; }
-  const directives = Object.fromEntries(csp.split(';').map((d) => d.trim().split(/\s+/)).filter((d) => d[0]).map(([name, ...values]) => [name.toLowerCase(), values.map((v) => v.toLowerCase())]));
-  const allows = (name, token) => (directives[name] || directives['default-src'] || []).includes(token);
-  const missing = [];
-  if (!allows('media-src', 'blob:')) missing.push('media-src blob:');
-  if (!allows('img-src', 'blob:') || !allows('img-src', 'data:')) missing.push('img-src blob: data:');
-  if (!allows('worker-src', 'blob:') && !allows('child-src', 'blob:') && !allows('script-src', 'blob:')) missing.push('worker-src blob:');
-  if (!allows('script-src', "'wasm-unsafe-eval'") && !allows('script-src', "'unsafe-eval'")) missing.push("script-src 'wasm-unsafe-eval'");
-  if (!missing.length) { console.log('  ✔ Content-Security-Policy allows local media, workers and WebAssembly'); return { ok: true, blocked: false }; }
-  console.log(`  ✖ Content-Security-Policy blocks the editor – missing: ${missing.join(', ')}`);
-  console.log(`    served policy: ${csp.slice(0, 300)}`);
-  console.log('    the .htaccess in this build sets a working policy; if it still appears, the header is added after Apache (CDN/proxy or the hosting panel) and must be changed there');
+/**
+ * Reads the Content-Security-Policy that actually reaches the browser and checks the editor can work
+ * under it. Hosting panels attach it to HTML only, sometimes as an injected <meta http-equiv> rather
+ * than a header, so both are inspected; an asset URL is used as a fallback when bot protection
+ * challenges the page.
+ */
+async function checkCsp(pageUrl, assetUrl) {
+  const read = async (url) => {
+    const res = await fetch(url, { headers: BROWSER_HEADERS, redirect: 'follow', signal: AbortSignal.timeout(20_000) });
+    const body = /text\/html/i.test(res.headers.get('content-type') || '') ? await res.text() : '';
+    // the value is quoted with one kind of quote and contains the other ('self'), so match the delimiter
+    const meta = body.match(/<meta[^>]+http-equiv=["']?content-security-policy["']?[^>]*\scontent=(["'])([\s\S]*?)\1/i);
+    const decode = (v) => v.replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&amp;/g, '&');
+    return { status: res.status, header: res.headers.get('content-security-policy'), meta: meta ? decode(meta[2]) : null, challenged: CHALLENGE_STATUSES.has(res.status) };
+  };
+  let page;
+  try { page = await read(pageUrl); }
+  catch (e) { console.log(`  ✖ could not read the page to check its security policy – ${e?.message || e}`); return { ok: false, blocked: false }; }
+  if (page.challenged && assetUrl) {
+    try { const asset = await read(assetUrl); page = { ...asset, meta: null }; } catch { /* keep the page result */ }
+  }
+  const policies = [page.header, page.meta].filter(Boolean);
+  if (!policies.length) {
+    if (page.challenged) { console.log(`  ⚠ could not check the security policy (HTTP ${page.status}, bot protection)`); return { ok: false, blocked: true }; }
+    console.log('  ✔ no Content-Security-Policy in the page (nothing restricts local playback)');
+    return { ok: true, blocked: false };
+  }
+  const missing = new Set();
+  for (const csp of policies) {
+    const directives = Object.fromEntries(csp.split(';').map((d) => d.trim().split(/\s+/)).filter((d) => d[0]).map(([name, ...values]) => [name.toLowerCase(), values.map((v) => v.toLowerCase())]));
+    const allows = (name, token) => (directives[name] || directives['default-src'] || []).includes(token);
+    if (!allows('media-src', 'blob:')) missing.add('media-src blob:');
+    if (!allows('img-src', 'blob:') || !allows('img-src', 'data:')) missing.add('img-src blob: data:');
+    if (!allows('worker-src', 'blob:') && !allows('child-src', 'blob:') && !allows('script-src', 'blob:')) missing.add('worker-src blob:');
+    if (!allows('script-src', "'wasm-unsafe-eval'") && !allows('script-src', "'unsafe-eval'")) missing.add("script-src 'wasm-unsafe-eval'");
+  }
+  const where = page.meta ? 'a <meta http-equiv> tag in the page' : 'the response header';
+  if (!missing.size) { console.log(`  ✔ Content-Security-Policy (${where}) allows local media, workers and WebAssembly`); return { ok: true, blocked: false }; }
+  console.log(`  ✖ Content-Security-Policy blocks the editor – missing: ${[...missing].join(', ')}`);
+  console.log(`    source: ${where}`);
+  for (const csp of policies) console.log(`    policy: ${csp.slice(0, 300)}`);
+  if (page.meta) console.log('    a <meta> policy comes from the served HTML, so .htaccess cannot replace it – remove it in the hosting panel (SiteGround Site Tools → Site → Security / optimizer) or the CDN');
+  else console.log('    the .htaccess in this build sets a working header; if it still appears, the header is added after Apache (CDN/proxy or the hosting panel) and must be changed there');
   return { ok: false, blocked: false };
 }
 function fmtBytes(n) { return n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(2)} MB`; }
