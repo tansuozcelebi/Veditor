@@ -223,7 +223,11 @@ dosyayı çözemezse dosya **ffmpeg.wasm** ile (açık kaynak, `@ffmpeg/core`) W
 - Çekirdek yalnızca ilk dönüştürmede indirilir, sonra tarayıcı önbelleğinde kalır; hiç dönüştürme gerekmezse
   hiç indirilmez. Her dağıtımdan sonra çekirdeğin sitede gerçekten sunulduğu HTTP ile denetlenir.
 - Dönüştürme tek iş parçacıklı WebAssembly'de çalışır: kabaca gerçek zamanın 0,5–1 katı hızında ilerler
-  (6 saniyelik klip ≈ 4 saniye). Görüntü en fazla 1080p'ye ölçeklenir.
+  (6 saniyelik klip ≈ 4 saniye). Görüntü en fazla 1080p'ye ölçeklenir ve 8 bit 4:2:0'a çevrilir (HDR/10 bit
+  kaynaklar için gerekli). Bildirimde geçen ve tahmini süre görünür; uzun dönüşümler **İptal** ile durdurulabilir.
+- Bir deneme başarısız olursa sırayla daha ucuz ayarlarla tekrar denenir: 1080p → 720p → yalnızca video
+  (ses akışı çevrilemiyorsa). Bellek hatasından sonra kodek çekirdeği sıfırlanır, böylece sonraki dosya
+  önceki çöküşten etkilenmez. Çıktıda görüntü akışı yoksa ya da dosya boşsa bu bir hata olarak bildirilir.
 - Dosya türü MIME tipinden, uzantıdan ya da (ikisi de yoksa) dosyanın ilk baytlarından belirlenir; uzantısız
   kamera dosyaları da tanınır.
 - Dönüştürme de başarısız olursa bildirim nedenini söyler (bozuk dosya, okunamadı, süre doldu). 400 MB'tan büyük
