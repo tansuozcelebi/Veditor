@@ -239,6 +239,7 @@ export async function importFiles(store: Store, files: File[], { onMedia, onErro
         let lastRatio = -1;
         try {
           converted = await transcodeToPlayable(file, {
+            onStreams: (st) => tr.step('streams', st),
             onProgress: (p) => {
               onTranscode?.(file, p);
               const pct = Math.floor(p.ratio * 10) / 10;
@@ -255,6 +256,11 @@ export async function importFiles(store: Store, files: File[], { onMedia, onErro
           onTranscode?.(file, null);
         }
         m = await loadMedia(converted, tr);
+        // ffmpeg can exit cleanly having written a file with no frames; such a clip cannot be shown
+        if (!(m.duration > 0) || (m.kind === 'video' && !(m.width > 0))) {
+          tr.step('the converted file is unusable', { duration: m.duration, width: m.width, height: m.height });
+          throw new MediaImportError('decode', 'the conversion produced an empty file');
+        }
         m.name = file.name;       // keep the name the user knows
         m.transcoded = true;
         m.originalType = file.type || undefined;
