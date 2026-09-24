@@ -137,8 +137,10 @@ function formats(): array {
             // Being listed is not the same as working: h264_v4l2m2m, h264_vaapi and friends are compiled
             // in but fail without their device. Ask this ffmpeg to encode a fraction of a second and see.
             $audio = firstEncoder($wanted['audio']);
-            if ($audio !== null && encodes($format, $video, $audio)) { $map[$format] = ['video' => $video, 'audio' => $audio]; break; }
-            if (encodes($format, $video, null)) { $map[$format] = ['video' => $video, 'audio' => null]; break; }
+            $withAudio = $audio !== null ? encodes($format, $video, $audio) : 'no';
+            if ($withAudio !== 'no') { $map[$format] = ['video' => $video, 'audio' => $audio, 'tested' => $withAudio === 'ok']; break; }
+            $videoOnly = encodes($format, $video, null);
+            if ($videoOnly !== 'no') { $map[$format] = ['video' => $video, 'audio' => null, 'tested' => $videoOnly === 'ok']; break; }
         }
     }
     return $map;
@@ -148,27 +150,35 @@ function formats(): array {
  * Encodes a fraction of a second of black video (and silence) to prove the encoder really runs here.
  * The answer is cached in the work directory, because it costs an ffmpeg start-up per combination.
  */
-function encodes(string $format, string $video, ?string $audio): bool {
+function encodes(string $format, string $video, ?string $audio): string {
     $ffmpeg = ffmpegPath();
-    if (!$ffmpeg || !canRunProcesses()) return false;
-    $cache = workRoot() . '/probe-' . substr(sha1($ffmpeg . '|' . $format . '|' . $video . '|' . (string) $audio), 0, 16);
-    if (is_file($cache) && time() - (int) @filemtime($cache) < 86400) return trim((string) @file_get_contents($cache)) === 'ok';
+    if (!$ffmpeg || !canRunProcesses()) return 'no';
+    // the leading version makes an answer from an older, weaker probe unusable instead of sticky
+    $cache = workRoot() . '/probe-' . substr(sha1('v2|' . $ffmpeg . '|' . $format . '|' . $video . '|' . (string) $audio), 0, 16);
+    if (is_file($cache) && time() - (int) @filemtime($cache) < 86400) {
+        $cached = trim((string) @file_get_contents($cache));
+        if (in_array($cached, ['ok', 'no', 'untested'], true)) return $cached;
+    }
     $out = workRoot() . '/probe-' . bin2hex(random_bytes(6)) . '.' . $format;
     $cmd = escapeshellarg($ffmpeg) . ' -hide_banner -nostdin -y -timelimit 10'
         . ' -f lavfi -i ' . escapeshellarg('color=c=black:s=64x64:r=10:d=0.3')
         . ' -f lavfi -i ' . escapeshellarg('anullsrc=r=44100:cl=mono')
         . ' -map 0:v -c:v ' . escapeshellarg($video) . ' -pix_fmt yuv420p'
         . ($audio !== null ? ' -map 1:a -c:a ' . escapeshellarg($audio) . ' -strict -2' : ' -an')
-        . ' -t 0.3 ' . escapeshellarg($out) . ' 2>&1';
+        . ' -t 0.3 ' . escapeshellarg($out) . ' 2>&1; echo "veditor-exit:$?"';
     $log = (string) @shell_exec($cmd);
-    $made = is_file($out) && filesize($out) > 0;
+    // The exit code is what counts: MP4 writes its header before the first frame, so a file exists
+    // even when the encoder dies straight after opening (what a hardware encoder without a device does).
+    $code = preg_match('/veditor-exit:(\d+)/', $log, $m) ? (int) $m[1] : 1;
+    $made = $code === 0 && is_file($out) && filesize($out) > 0;
     @unlink($out);
-    // A build stripped down to the codecs it needs (Playwright ships one) has no lavfi and cannot
-    // generate the test clip at all. That says nothing about the encoder, so the list is trusted.
-    $inconclusive = !$made && preg_match('/Unknown input format|Unrecognized option|No such filter|Error opening input|Option not found/i', $log);
-    $ok = $made || (bool) $inconclusive;
-    @file_put_contents($cache, $ok ? 'ok' : 'no');
-    return $ok;
+    // A build stripped to the codecs it needs (Playwright ships one) has no lavfi and cannot generate
+    // the test clip at all. That says nothing about the encoder, so the list is trusted – but the
+    // health report says so, rather than claiming the encoder was tried.
+    $verdict = $made ? 'ok'
+        : (preg_match('/Unknown input format|Unrecognized option|No such filter|Error opening input|Option not found|Unknown option/i', $log) ? 'untested' : 'no');
+    @file_put_contents($cache, $verdict);
+    return $verdict;
 }
 
 const MIME = ['webm' => 'video/webm', 'mp4' => 'video/mp4'];

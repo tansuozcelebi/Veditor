@@ -292,8 +292,10 @@ Uç nokta derlemeyle birlikte gider: `public/api/convert.php` → `dist/api/conv
 Sunucu, kendi ffmpeg'inin gerçekten yazabildiği kapsayıcıları `health` yanıtında `formats` altında bildirir.
 Encoder'ın listede görünmesi yetmez — `h264_v4l2m2m`, `h264_vaapi` gibi donanım encoder'ları derlemede bulunur
 ama paylaşımlı sunucuda arkalarında aygıt yoktur. Bu yüzden sunucu, aday encoder ile 0,3 saniyelik siyah bir
-test klibi üretmeyi dener ve yalnızca gerçekten çalışanı duyurur (sonuç bir gün önbelleklenir; kendi test
-klibini üretemeyen çok dar derlemelerde bu deneme sonuçsuz sayılır ve liste olduğu gibi kabul edilir).
+test klibi üretmeyi dener ve yalnızca **çıkış kodu 0** ile tamamlananı duyurur (MP4 ilk kareden önce başlığı
+yazdığı için "dosya oluştu mu" sorusu yeterli değildir). Sonuç bir gün önbelleklenir. Kendi test klibini
+üretemeyen çok dar derlemelerde deneme sonuçsuz sayılır, liste olduğu gibi kabul edilir ve `formats` içindeki
+`tested: false` ile bildirilir (deploy çıktısında `not verifiable on this build` olarak görünür).
 Duyurulan kapsayıcılar:
 `webm` (VP8/VP9 – telifli kodekler olmadan derlenmiş tarayıcılar dahil her yerde oynar) ve/veya `mp4`
 (H.264 – Chrome, Edge, Safari). Tarayıcı `canPlayType` ile kendi oynatabildiklerini belirler ve yalnızca
