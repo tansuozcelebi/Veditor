@@ -31,6 +31,8 @@ kopyalanıp takılabilir. Ayrıntılar için [Başka bir uygulamaya entegrasyon]
 | **Geçiş efektleri** | Klip başına giriş/çıkış geçişi: çapraz erime, sola/sağa/yukarı/aşağı kaydırma, yakınlaşma, sola/sağa silme, bulanıklık. Bitişik önceki klip varsa iki klip harmanlanır (önceki klip uzatılır, sesler çapraz geçer); yoksa klip alttaki katmandan belirir. |
 | **Yazı katmanı** | Video kanallarına yazı klipleri (**T** tuşu veya "Yazı Ekle"): çok satırlı metin, yazı tipi, boyut, renk, kalın/italik, hizalama, arka plan kutusu, kontur, gölge, satır aralığı; konum/ölçek/opaklık ve geçişler tüm kliplerde olduğu gibi çalışır. |
 | **Dışa aktarma** | WebM (VP9/VP8 + Opus) ya da tarayıcı destekliyorsa MP4 (H.264 + AAC); yalnızca ses (Opus / AAC). Çözünürlük (1080p, 720p, 4K, dikey, kare, özel), kare hızı, bit hızı, ilerleme çubuğu, önizleme ve indirme. WebM çıktısına süre bilgisi otomatik eklenir. |
+| **Dockable paneller** | Medya, Önizleme, Özellikler, Kaynak Oynatıcı ve Zaman Çizelgesi birer panel: sekmesinden tutup başka bir kenara sürüklenebilir, üst üste sekme hâline getirilebilir, kenarlarından boyutlandırılabilir, kapatılıp **Yerleşim** menüsünden geri açılabilir. Düzen tarayıcıda saklanır, menü geçişlerinde ve yeniden açılışta korunur; tek tıkla varsayılana dönülür. |
+| **Kaynak oynatıcı** | Ayarların altındaki ikinci oynatıcı: seçilen, içe aktarılan ya da üzerine sürükleyip bıraktığınız klibi tek başına, kendi kontrolleriyle oynatır ve **Ekle** ile oynatma kafasına yerleştirir. Zaman çizelgesi oynarken sesler çakışmaz; hangisi başlarsa diğeri durur. |
 | **Proje** | Proje ayarları (çözünürlük, FPS, arka plan), proje dosyasını JSON olarak kaydetme / açma (medya dosyaları yeniden eşleştirilir), TR / EN arayüz. |
 
 ## Çalıştırma
@@ -52,10 +54,25 @@ MediaRecorder desteği kısıtlıdır. Node 20+ gerekir.
 2. Medya kartındaki **＋** ile oynatma kafasına ekleyin, çift tıklayın ya da doğrudan istediğiniz kanala sürükleyin.
    Ses dosyaları otomatik olarak ses kanalına gider; video bir ses kanalına bırakılırsa yalnızca sesi kullanılır.
 3. Klipleri sürükleyin, uçlarından kırpın, **S** ile bölün. Sağ tık menüsünde tüm işlemler vardır.
-4. Bir klibi seçince sağdaki **Özellikler** panelinde ses, fade, opaklık, ölçek, konum, geçişler ve yazı ayarları görünür.
+4. Bir klibi seçince **Özellikler** panelinde ses, fade, opaklık, ölçek, konum, geçişler ve yazı ayarları görünür.
+   Seçtiğiniz medya aynı anda soldaki **Kaynak Oynatıcı**'da açılır; oradan izleyip **Ekle** ile zaman çizelgesine koyabilirsiniz.
 5. **Ses Kaydet** ile mikrofondan seslendirme kaydedin; kayıt oynatma kafasından başlar ve durdurunca ses kanalına eklenir.
 6. **Dışa Aktar** ile biçim, çözünürlük, FPS ve kaliteyi seçip başlatın. Dışa aktarma gerçek zamanlı çalışır
    (5 dakikalık proje ≈ 5 dakika); sekmeyi ön planda tutun.
+
+### Panel yerleşimi
+
+Ekrandaki beş panelin (Medya, Önizleme, Özellikler, Kaynak Oynatıcı, Zaman Çizelgesi) hepsi **dockable**'dır:
+
+- Panelin **sekmesinden tutup sürükleyin**; bırakma sırasında hedef alan vurgulanır. Bir panelin kenarına
+  bırakırsanız yan yana/alt alta yerleşir, ortasına bırakırsanız sekme olarak o panelin üzerine eklenir.
+- Panellerin arasındaki **ayraçları sürükleyerek** boyutlandırın.
+- Sekmedeki **×** ile paneli kapatın; üst çubuktaki **Yerleşim** menüsünden işaretleyerek geri açın.
+- **Yerleşim → Varsayılan yerleşime dön** ilk açılıştaki düzeni geri getirir.
+
+Düzen tarayıcıda (`localStorage`, `veditor.layout.v1`) saklanır: menüler arasında gezinseniz de sayfayı
+kapatıp açsanız da paneller bıraktığınız yerde kalır. Varsayılan düzen: solda **Özellikler** ve altında
+**Kaynak Oynatıcı**, ortada **Önizleme**, sağda **Medya**, altta tam genişlikte **Zaman Çizelgesi**.
 
 ### Kısayollar
 
@@ -84,11 +101,14 @@ src/index.css                      Tailwind v4 + shadcn tema değişkenleri (okl
 src/app/App.tsx                    Geliştirme kabuğu: yan menü + react-router rotaları (host uygulamayı taklit eder)
 src/lib/utils.ts                   shadcn `cn()` yardımcısı
 src/components/ui/                 shadcn/ui bileşenleri (new-york): button, input, textarea, label, separator, badge,
-                                   switch, slider, select, native-select, dialog, context-menu, tooltip, scroll-area, sonner
+                                   switch, slider, select, native-select, dialog, dropdown-menu, context-menu, tooltip,
+                                   scroll-area, sonner
 src/features/video-editor/         ▶ ÖZELLİK MODÜLÜ (host uygulamaya kopyalanacak klasör)
   index.ts                         Genel API: <VideoEditor />, Store, Player, Exporter, i18n, tipler
   editor.css                       Zaman çizelgesi / klip / medya kartı stilleri (.veditor altında, shadcn değişkenlerini kullanır)
   components/VideoEditor.tsx       Ana bileşen: düzen, düzenleme komutları, kısayollar, diyaloglar
+  components/EditorDock.tsx        Dockable panel düzeni (dockview): varsayılan yerleşim, kalıcılık, Yerleşim menüsü
+  components/SourcePlayer.tsx      Kaynak oynatıcı (seçilen / sürüklenen klibi tek başına oynatır)
   components/TopBar.tsx            Proje adı, aç/kaydet, dil, dışa aktar
   components/MediaLibrary.tsx      Medya kitaplığı (içe aktarma, sürükle-bırak, kayıt)
   components/Preview.tsx           Canvas önizleme, taşıma kontrolleri, görünüm modu, monitör sesi
@@ -102,13 +122,20 @@ src/features/video-editor/         ▶ ÖZELLİK MODÜLÜ (host uygulamaya kopya
   hooks/useImportFiles.ts          Bildirimli dosya içe aktarma
   engine/types.ts                  Track, Clip, Project, MediaItem, Export* tipleri
   engine/state.ts                  Proje modeli, seçim, geri al / yeniden yap, yerleşim/çakışma, bölme, biçimlendirme
-  engine/media.ts                  İçe aktarma, metadata, küçük resimler, dalga formu
+  engine/media.ts                  İçe aktarma, metadata, küçük resimler, dalga formu, dönüştürücü seçimi
+  engine/transcode.ts              Tarayıcıda dönüştürme (ffmpeg.wasm): çekirdek yükleme, yeniden deneme merdiveni
+  engine/serverTranscode.ts        Sunucuda dönüştürme istemcisi (yükle → sorgula → indir), sağlık yoklaması
+  engine/diagnostics.ts            Konsol ortam raporu ve içe aktarma izi
+  engine/csp.ts                    Güvenlik politikası ihlallerinin kaydı
   engine/player.ts                 Oynatma motoru: AudioContext saati, Web Audio miks grafı, Canvas kompozit, geçişler, yazı
   engine/timeline.ts               Zaman çizelgesi DOM motoru (cetvel, sürükleme/kırpma/yapışma) – React ref ile sarılır
   engine/exporter.ts               MediaRecorder tabanlı dışa aktarma
   engine/webm-fix.ts               WebM çıktısına Duration alanı ekleyen EBML yamalayıcı
   engine/i18n.ts                   TR / EN çeviriler
+public/api/convert.php             Sunucu tarafı dönüştürme uç noktası (PHP + ffmpeg, işler halinde)
+public/api/config.example.php      Sunucu dönüştürme ayarları örneği (yol, sınırlar, token)
 test/                              Playwright uçtan uca duman testi (üretim derlemesine karşı) ve fikstür üretici
+test/php-router.php                Testte dist/ klasörünü PHP ile sunar (SPA yedeği + gerçek API)
 ```
 
 **Katmanlar:** `engine/` React'ten bağımsız, tip güvenli sınıflardan oluşur (Store olay yayar, Player/Exporter
@@ -130,11 +157,12 @@ değişkenleri, `@/` takma adı), lucide-react ikonları, react-router. Adımlar
 
 1. **Klasörü kopyalayın:** `src/features/video-editor/` → host uygulamada aynı yola.
 2. **shadcn bileşenlerini sağlayın:** Host'ta yoksa `npx shadcn@latest add button input textarea label separator
-   badge switch slider select dialog context-menu tooltip scroll-area sonner` çalıştırın. `native-select`
+   badge switch slider select dialog dropdown-menu context-menu tooltip scroll-area sonner` çalıştırın. `native-select`
    shadcn kayıt defterinde yeni bir bileşendir; yoksa `src/components/ui/native-select.tsx` dosyasını kopyalayın.
    Modül yalnızca `@/components/ui/*` ve `@/lib/utils` yollarına bağımlıdır.
 3. **Bağımlılıklar:** `react-router-dom` hariç `package.json` içindeki `dependencies` (radix-ui, lucide-react,
-   sonner, clsx, tailwind-merge, class-variance-authority) host'ta bulunmalıdır. Host shadcn'in eski
+   sonner, clsx, tailwind-merge, class-variance-authority, panel yerleşimi için **dockview-react**, kodek
+   dönüştürme için **@ffmpeg/ffmpeg**, **@ffmpeg/util**, **@ffmpeg/core**) host'ta bulunmalıdır. Host shadcn'in eski
    `@radix-ui/react-*` paketlerini kullanıyorsa `src/components/ui` içindeki `from 'radix-ui'` içe aktarmaları
    host'un kendi bileşenleriyle değiştirilebilir; editör bileşenleri Radix'e doğrudan bağımlı değildir.
 4. **Rota ve menü:**
@@ -192,6 +220,13 @@ Test, üretim derlemesini yerel bir sunucudan (SPA yedeği ile) başsız Chromiu
 (iki VP8 video, WAV ton, PNG) üretir, içe aktarma → yerleştirme → bölme/geri alma → fare ile sürükleme/kırpma →
 oynatma/kompozit/ızgara → sesi ayırma → sahte mikrofonla seslendirme kaydı → geçişler → yazı katmanı → sağ tık
 menüsü → proje kaydet/aç → dışa aktarma akışını doğrular ve çıktıyı Playwright ile gelen ffmpeg ile kontrol eder.
+Panel yerleşimi de gerçek fare ile sınanır: bir panel sekmesi sürüklenip başka bir panelin üzerine bırakılır,
+**Yerleşim** menüsünden panel gizlenip geri açılır, düzenin saklandığı ve varsayılana dönüldüğü doğrulanır;
+kaynak oynatıcının seçilen klibi oynattığı, üzerine bırakılan dosyayı içe aktardığı ve zaman çizelgesi ile
+aynı anda ses vermediği kontrol edilir. Ayrıca ayrı tarayıcı oturumlarında gerçek tıklama ile oynatma, dar bir
+CSP altındaki davranış ve – makinede PHP varsa – `dist/` klasörünü PHP ile sunarak **sunucu tarafında
+dönüştürme** uçtan uca sınanır (sunucu dönüştürür,
+editör sunucuyu tercih eder, sunucu reddettiğinde tarayıcıya düşülür, işler sunucuda temizlenir).
 Çıktılar `test/output/` altına yazılır.
 
 ### Otomatik birleştirme (auto-merge)
@@ -206,8 +241,9 @@ taslağa çevirmek otomatik birleştirmeyi durdurur.
 Tarayıcılar yalnızca kendi derlemelerinde bulunan kodekleri açar: telifli kodekler olmadan derlenmiş Chromium
 sürümleri **H.264/AAC** dosyalarını (telefon ve WhatsApp videolarının neredeyse tamamı) reddeder, HEVC/H.265,
 ProRes, DivX ve WMV'yi ise hiçbir tarayıcı açmaz. Veditor bu boşluğu kendi kodek setiyle kapatır: tarayıcı bir
-dosyayı çözemezse dosya **ffmpeg.wasm** ile (açık kaynak, `@ffmpeg/core`) WebM'e (VP8 + Vorbis) dönüştürülür ve
-öyle eklenir. Kullanıcı yalnızca bir ilerleme bildirimi görür; başka bir işlem yapması gerekmez.
+dosyayı çözemezse dosya WebM'e (VP8 + Vorbis) dönüştürülüp öyle eklenir: sitenin sunucusunda `ffmpeg` varsa
+**sunucuda** (hızlı yol, aşağıya bakın), yoksa tarayıcıda **ffmpeg.wasm** ile (açık kaynak, `@ffmpeg/core`).
+Kullanıcı yalnızca bir ilerleme bildirimi görür; başka bir işlem yapması gerekmez.
 
 | Tür | Doğrudan açılanlar | Otomatik dönüştürülenler |
 | --- | --- | --- |
@@ -233,6 +269,43 @@ dosyayı çözemezse dosya **ffmpeg.wasm** ile (açık kaynak, `@ffmpeg/core`) W
 - Dönüştürme de başarısız olursa bildirim nedenini söyler (bozuk dosya, okunamadı, süre doldu). 400 MB'tan büyük
   dosyalarda dalga formu çizilmez; klip yine de normal kullanılır.
 
+### Sunucu tarafında dönüştürme (hızlı yol)
+
+Tarayıcıdaki dönüştürme her yerde çalışır ama tek iş parçacıklı WebAssembly'de koştuğu için uzun bir HEVC
+klibi dakikalar sürebilir. Sitenin kendi sunucusunda `ffmpeg` varsa Veditor aynı işi **sunucuda** yaptırır;
+tarayıcı yalnızca dosyayı yükler ve sonucu indirir. Sunucu yoksa, meşgulse, dosya limitin üstündeyse ya da
+dönüştürme başarısız olursa otomatik olarak tarayıcıdaki dönüştürücüye düşülür – kullanıcı fark etmez,
+yalnızca bildirim metni "sunucuda dönüştürülüyor" yerine "dönüştürülüyor" der.
+
+Uç nokta derlemeyle birlikte gider: `public/api/convert.php` → `dist/api/convert.php`.
+
+| İstek | Yanıt |
+| --- | --- |
+| `GET api/convert.php?action=health` | `{ok, ffmpeg, reason, video, audio, maxBytes, maxJobs, tokenRequired}` |
+| `POST api/convert.php?action=start` (multipart `file`) | `{ok, job}` |
+| `GET api/convert.php?action=status&job=…` | `{state: running\|done\|error, progress, log}` |
+| `GET api/convert.php?action=result&job=…` | dönüştürülmüş WebM dosyası |
+| `POST api/convert.php?action=cancel&job=…` | işi durdurur ve dosyaları siler |
+
+**Sunucuda açmak için**
+
+1. Barındırmada PHP çalışıyor olmalı (SiteGround'da varsayılan olarak çalışır) ve `proc_open`/`shell_exec`
+   kapalı olmamalı. `action=health` çıktısındaki `reason` alanı eksik olanı söyler.
+2. Sunucuda `ffmpeg` yoksa statik bir Linux derlemesini `public_html/api/bin/ffmpeg` konumuna yükleyip
+   `chmod 755 bin/ffmpeg` yapın (ör. johnvansickle.com/ffmpeg statik derlemeleri). Betik önce `bin/ffmpeg`,
+   sonra sistem yollarını, en son `PATH`'i dener.
+3. Gerekirse `public/api/config.example.php` dosyasını `config.php` olarak kopyalayıp yol, boyut sınırı,
+   eşzamanlı iş sayısı ve (uç nokta herkese açık olmasın isterseniz) `token` değerini ayarlayın.
+   `.htaccess` hem `config.php`'yi hem de `bin/ffmpeg` dosyasını HTTP'ye kapatır.
+4. Her dağıtımdan sonra `npm run deploy` çıktısı sunucunun ne sunduğunu yazar:
+   `✔ server-side conversion: ffmpeg n6.1 (libvpx + libvorbis), up to 64 MB per file` ya da neden
+   kullanılamadığı. Tarayıcı konsolundaki ortam raporunda da aynı satır bulunur.
+
+İşler geçici bir klasörde tutulur, biten/terk edilen işler 30 dakika sonra (veya istemci dosyayı aldıktan
+hemen sonra) silinir; aynı anda en fazla `max_jobs` dönüştürme çalışır ve iptal edilen bir iş sunucuda
+gerçekten sonlandırılır. İstemciden gelen hiçbir metin kabuk komutuna girmez: dosya adı sunucuda üretilir,
+tüm parametreler `escapeshellarg` ile kaçırılır.
+
 ### Konsol tanılaması
 
 Her içe aktarma tarayıcıda olup bittiği için hata ayıklama bilgisi konsola yazılır (F12 → Console):
@@ -243,7 +316,8 @@ Her içe aktarma tarayıcıda olup bittiği için hata ayıklama bilgisi konsola
   metadata sonucu, tarayıcı reddettiyse `MediaError` kodu ve mesajı, dönüştürme kararı, dönüştürme ilerlemesi
   ve sonucu, küçük resim / dalga formu sayıları. Başarısız içe aktarmalar katlanmamış bir grup olarak açılır.
 - `window.veditor.diagnostics()` ile ortam raporunu istediğiniz an tekrar alabilirsiniz;
-  `window.veditor` ayrıca `store`, `player`, `importFiles` ve `ffmpeg` yardımcılarını da verir.
+  `window.veditor` ayrıca `store`, `player`, `importFiles`, `ffmpeg` (tarayıcı dönüştürücüsü) ve
+  `server` (sunucu dönüştürücüsü: `probeServer()`, `transcodeOnServer()`, `setServerToken()`) verir.
 
 Bir dosya açılmıyorsa konsoldaki `[veditor] import ✖ …` grubu nedeni doğrudan gösterir: kodek desteği yok,
 dosya bozuk, süre doldu ya da sayfanın güvenlik politikası engelliyor.

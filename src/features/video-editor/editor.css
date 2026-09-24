@@ -82,3 +82,34 @@
 .veditor .drag-over { outline: 2px dashed var(--ve-video); outline-offset: -6px; background: rgb(59 130 246 / .06); }
 .veditor .rec-indicator::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ve-playhead); margin-right: 6px; animation: ve-blink 1s infinite; }
 @keyframes ve-blink { 50% { opacity: .2; } }
+
+/* ---------- dockable panels (dockview) ---------- */
+/* dockview renders each panel into a plain wrapper; give it the full group so our panels, which are
+   column flex boxes with their own scroll areas, fill the space instead of collapsing to content. */
+.veditor .dv-react-part { height: 100%; width: 100%; display: flex; flex-direction: column; }
+.veditor .dv-react-part > * { flex: 1 1 auto; min-height: 0; min-width: 0; }
+/* the shadcn palette, so the docking chrome belongs to the editor rather than to VS Code */
+.veditor .dv-dockview {
+  --dv-group-view-background-color: var(--background);
+  --dv-tabs-and-actions-container-background-color: var(--card);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--background);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--card);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--background);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--card);
+  --dv-tab-divider-color: var(--border);
+  --dv-separator-border: var(--border);
+  --dv-activegroup-visiblepanel-tab-color: var(--foreground);
+  --dv-activegroup-hiddenpanel-tab-color: var(--muted-foreground);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--muted-foreground);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--muted-foreground);
+  --dv-paneview-header-border-color: var(--border);
+  --dv-drag-over-background-color: color-mix(in oklab, var(--ve-video) 28%, transparent);
+  --dv-edge-dock-indicator-color: var(--ve-video);
+  --dv-tabs-and-actions-container-height: 30px;
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-icon-hover-background-color: var(--accent);
+}
+/* the active panel is marked on its tab strip, which is otherwise very quiet in this palette */
+.veditor .dv-tabs-and-actions-container { border-bottom: 1px solid var(--border); }
+.veditor .dv-tab.dv-active-tab { box-shadow: inset 0 2px 0 var(--ve-video); }
+.veditor .dv-tab { user-select: none; }

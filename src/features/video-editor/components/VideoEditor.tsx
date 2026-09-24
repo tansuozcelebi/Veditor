@@ -4,17 +4,15 @@ import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { EditorProvider, useEditor, useI18n, type EditorContextValue, type EditorSession } from '../hooks/useEditor';
 import { TopBar } from './TopBar';
-import { MediaLibrary } from './MediaLibrary';
 import { useImportFiles } from '../hooks/useImportFiles';
-import { Preview } from './Preview';
-import { Inspector } from './Inspector';
-import { TimelinePanel } from './TimelinePanel';
+import { EditorDock, LayoutMenu, type DockHandle, type DockPanelProps } from './EditorDock';
 import { ExportDialog } from './ExportDialog';
 import { RecordDialog } from './RecordDialog';
 import { OpenProjectDialog } from './OpenProjectDialog';
 import { TEXT_DEFAULT_DURATION, formatTime, uid } from '../engine/state';
 import { supportedFormats } from '../engine/exporter';
 import { loadFFmpeg, runFFmpeg, transcodeToPlayable } from '../engine/transcode';
+import { probeServer, resetServerProbe, setServerToken, transcodeOnServer } from '../engine/serverTranscode';
 import { cspViolations, isLocalMediaBlock, onCspViolation } from '../engine/csp';
 import { diagnostics, log, logDiagnostics } from '../engine/diagnostics';
 import type { Timeline } from '../engine/timeline';
@@ -63,6 +61,7 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
   const [recordOpen, setRecordOpen] = useState(false);
   const [projectData, setProjectData] = useState<ProjectFile | null>(null);
   const [libSelected, setLibSelected] = useState<string | null>(null);
+  const [dock, setDock] = useState<DockHandle | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // ---------- editing operations ----------
@@ -160,6 +159,17 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
 
   const removeMedia = useCallback((m: MediaItem) => { if (window.confirm(t('library.removeConfirm'))) store.removeMedia(m.id); }, [store, t]);
 
+  // ---------- source monitor follows the newest file ----------
+  // Whether a clip arrives by drag and drop or through the file picker, it becomes the one the source
+  // player shows, so "opened" and "dropped" files are both visible without a second click.
+  useEffect(() => {
+    const seen = new Set(store.media.keys());
+    return store.on('media', () => {
+      for (const id of store.media.keys()) if (!seen.has(id)) { seen.add(id); setLibSelected(id); }
+      for (const id of [...seen]) if (!store.media.has(id)) seen.delete(id);
+    });
+  }, [store]);
+
   // ---------- environment report ----------
   // Imports happen entirely in the browser, so the console is where a failure can be understood:
   // print what this browser can decode and whether the page allows local files at all.
@@ -221,37 +231,42 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
 
   // ---------- debug / test handle ----------
   useEffect(() => {
-    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable }, diagnostics: () => logDiagnostics(CODEC_CORE_URL), rawDiagnostics: () => diagnostics(CODEC_CORE_URL) };
+    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, dock, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable }, server: { probeServer, transcodeOnServer, setServerToken, resetServerProbe }, diagnostics: () => logDiagnostics(CODEC_CORE_URL), rawDiagnostics: () => diagnostics(CODEC_CORE_URL) };
     log('debug handle ready – window.veditor (diagnostics(), store, player, importFiles …)');
     return () => { delete (window as any).veditor; };
-  }, [store, player, exporter, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, importFiles]);
+  }, [store, player, exporter, dock, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, importFiles]);
 
   const actions = { split: splitSelected, duplicate: duplicateSelected, detachAudio: detachAudioSelected, deleteSelected, crossfade: crossfadeSelected, addText: () => addTextClip() };
 
+  // Every panel is a dockable panel: it can be dragged to another edge, stacked into tabs, resized,
+  // closed and reopened. The arrangement is remembered, and the top bar can put it back.
+  const panels: DockPanelProps = {
+    library: {
+      selectedId: libSelected, onSelect: setLibSelected,
+      onAdd: (id) => { addMediaToTimeline(id, { time: player.currentTime }); },
+      onRecord: () => setRecordOpen(true),
+      onDragStart: (m) => timelineRef.current?.setDraggingMediaKind(m.kind),
+      onRemove: removeMedia,
+    },
+    preview: { recording: recordOpen },
+    inspector: { actions },
+    source: { mediaId: libSelected, onSelect: setLibSelected, onAdd: (id) => { addMediaToTimeline(id, { time: player.currentTime }); } },
+    timeline: {
+      timelineRef,
+      actions: {
+        ...actions,
+        addTrack: (kind) => { const tr = store.addTrack(kind); store.selectTrack(tr.id); },
+        onDropMedia: (mediaId, trackId, time) => addMediaToTimeline(mediaId, { trackId, time }),
+        onDropFiles: async (files, trackId, time) => { const added = await importFiles(files); let tm = time; for (const m of added) { const c = addMediaToTimeline(m.id, { trackId, time: tm, quiet: true }); if (c) tm = c.start + c.duration; } },
+        revealMedia: (id) => setLibSelected(id),
+      },
+    },
+  };
+
   return (
-    <div ref={rootRef} className={cn('veditor bg-background text-foreground dark grid h-full min-h-0 w-full min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)_320px] overflow-hidden', className)}>
-      <TopBar embedded={embedded} onExport={() => setExportOpen(true)} onSave={saveProject} onOpen={openProject} />
-      <main className="grid min-h-0 min-w-0 grid-cols-[300px_minmax(0,1fr)_300px] max-[1100px]:grid-cols-[240px_minmax(0,1fr)_260px]">
-        <MediaLibrary
-          selectedId={libSelected} onSelect={setLibSelected}
-          onAdd={(id) => addMediaToTimeline(id, { time: player.currentTime })}
-          onRecord={() => setRecordOpen(true)}
-          onDragStart={(m) => timelineRef.current?.setDraggingMediaKind(m.kind)}
-          onRemove={removeMedia}
-        />
-        <Preview recording={recordOpen} />
-        <Inspector actions={actions} />
-      </main>
-      <TimelinePanel
-        timelineRef={timelineRef}
-        actions={{
-          ...actions,
-          addTrack: (kind) => { const tr = store.addTrack(kind); store.selectTrack(tr.id); },
-          onDropMedia: (mediaId, trackId, time) => addMediaToTimeline(mediaId, { trackId, time }),
-          onDropFiles: async (files, trackId, time) => { const added = await importFiles(files); let tm = time; for (const m of added) { const c = addMediaToTimeline(m.id, { trackId, time: tm, quiet: true }); if (c) tm = c.start + c.duration; } },
-          revealMedia: (id) => setLibSelected(id),
-        }}
-      />
+    <div ref={rootRef} className={cn('veditor bg-background text-foreground dark flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden', className)}>
+      <TopBar embedded={embedded} onExport={() => setExportOpen(true)} onSave={saveProject} onOpen={openProject} layout={<LayoutMenu dock={dock} />} />
+      <EditorDock className="min-h-0 min-w-0 flex-1" panels={panels} onHandle={setDock} />
       <ExportDialog open={exportOpen} onOpenChange={setExportOpen} onExported={onExport} />
       <RecordDialog open={recordOpen} onOpenChange={setRecordOpen} onRecorded={onRecorded} />
       <OpenProjectDialog data={projectData} onOpenChange={(o) => { if (!o) setProjectData(null); }} />

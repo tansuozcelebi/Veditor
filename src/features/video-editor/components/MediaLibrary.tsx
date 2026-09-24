@@ -27,7 +27,7 @@ export function MediaLibrary({ onAdd, onRecord, onDragStart, selectedId, onSelec
   };
 
   return (
-    <aside className="bg-card flex min-h-0 min-w-0 flex-col border-r" id="libraryPanel">
+    <aside className="bg-card flex min-h-0 min-w-0 flex-col" id="libraryPanel">
       <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
         <h2 className="text-sm font-semibold">{t('library.title')}</h2>
         <div className="flex gap-1.5">

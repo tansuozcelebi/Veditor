@@ -54,7 +54,7 @@ export function TimelinePanel({ actions, timelineRef }: { actions: TimelineActio
   const menu = menuClip ? store.getClip(menuClip) : null;
 
   return (
-    <section className="bg-card flex min-h-0 min-w-0 flex-col border-t" id="timelinePanel">
+    <section className="bg-card flex min-h-0 min-w-0 flex-col" id="timelinePanel">
       <div className="flex flex-wrap items-center gap-3 border-b px-3 py-1.5">
         <div className="flex items-center gap-1">
           <Button id="btnUndo" variant="ghost" size="xs" disabled={!store.canUndo()} onClick={() => store.undo()}><Undo2 /> {t('edit.undo')}</Button>

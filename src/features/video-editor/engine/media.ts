@@ -1,7 +1,8 @@
 // ===================== Media import & analysis (metadata, thumbnails, waveforms) =====================
 import { uid, IMAGE_DEFAULT_DURATION, type Store } from './state';
 import type { MediaItem, MediaKind, Thumbnail } from './types';
-import { transcodeToPlayable, type TranscodeProgress } from './transcode';
+import { transcodeToPlayable, type StreamSummary, type TranscodeProgress } from './transcode';
+import { probeServer, resetServerProbe, ServerConvertError, transcodeOnServer } from './serverTranscode';
 import { log, trace } from './diagnostics';
 
 const THUMB_COUNT = 12;
@@ -206,8 +207,38 @@ export async function generatePeaks(m: MediaItem): Promise<Float32Array | null> 
   return peaks;
 }
 
-/** A file the browser refused to decode can still be rescued by converting it with ffmpeg.wasm. */
+/** A file the browser refused to decode can still be rescued by converting it. */
 const RECOVERABLE: ImportFailReason[] = ['codec', 'decode'];
+
+/**
+ * Converts a file the browser cannot decode. The site's own host does it natively when it can
+ * (public/api/convert.php with ffmpeg) – far faster than WebAssembly – and ffmpeg.wasm in the
+ * browser takes over whenever the host is missing, busy, too small for the file, or simply fails.
+ */
+async function convertForPlayback(file: File, tr: ReturnType<typeof trace> | undefined, opts: { onProgress?: (p: TranscodeProgress) => void; signal?: AbortSignal }): Promise<{ file: File; by: 'server' | 'browser' }> {
+  const health = await probeServer().catch(() => null);
+  const onServer = !!health?.ok && file.size <= health.maxBytes;
+  tr?.step('choosing a converter', {
+    converter: onServer ? 'server (ffmpeg)' : 'browser (ffmpeg.wasm)',
+    serverFfmpeg: health?.ffmpeg ?? null,
+    why: !health ? 'this host has no conversion service' : health.ok ? (onServer ? 'the host converts natively' : `the file is larger than the host accepts (${health.maxBytes} bytes)`) : health.reason,
+  });
+  if (onServer) {
+    try {
+      const out = await transcodeOnServer(file, opts);
+      tr?.step('converted on the server', { bytes: out.size });
+      return { file: out, by: 'server' };
+    } catch (e) {
+      const reason = e instanceof ServerConvertError ? e.reason : null;
+      if (reason === 'aborted' || opts.signal?.aborted) throw e;
+      resetServerProbe(); // ask again next time: the host may have been busy for a moment
+      tr?.step('the server could not convert it, trying the browser', { reason, message: String((e as Error)?.message ?? e).slice(0, 300) });
+    }
+  }
+  const out = await transcodeToPlayable(file, { ...opts, onStreams: (st: StreamSummary) => tr?.step('streams', st) });
+  tr?.step('converted in the browser', { bytes: out.size });
+  return { file: out, by: 'browser' };
+}
 
 export interface ImportHooks {
   onMedia?: (m: MediaItem) => void;
@@ -234,20 +265,21 @@ export async function importFiles(store: Store, files: File[], { onMedia, onErro
         // The browser lacks this codec (H.264/AAC in builds without proprietary codecs, HEVC, ProRes,
         // DivX, WMV …). Convert the file to WebM with our own ffmpeg build and import that instead.
         onTranscode?.(file, { ratio: 0, stage: 'loading' });
-        tr.step('converting with ffmpeg.wasm');
         let converted: File;
+        let convertedBy: 'server' | 'browser';
         let lastRatio = -1;
+        let lastStage = '';
         try {
-          converted = await transcodeToPlayable(file, {
-            onStreams: (st) => tr.step('streams', st),
+          ({ file: converted, by: convertedBy } = await convertForPlayback(file, tr, {
             onProgress: (p) => {
               onTranscode?.(file, p);
               const pct = Math.floor(p.ratio * 10) / 10;
-              if (p.stage === 'converting' && pct > lastRatio) { lastRatio = pct; tr.step(`converting ${Math.round(p.ratio * 100)}%`); }
+              if (p.stage !== lastStage) { lastStage = p.stage; lastRatio = -1; }
+              if (p.stage === 'converting' && pct > lastRatio) { lastRatio = pct; tr.step(`converting ${Math.round(p.ratio * 100)}% (${p.where === 'server' ? 'server' : 'browser'})`); }
             },
             signal,
-          });
-          tr.step('converted', { from: file.type || '(unknown)', to: 'video/webm', bytes: converted.size });
+          }));
+          tr.step('converted', { from: file.type || '(unknown)', to: 'video/webm', bytes: converted.size, by: convertedBy });
         } catch (te) {
           tr.step('conversion failed', te);
           console.warn('transcode failed', file.name, te);
@@ -263,11 +295,12 @@ export async function importFiles(store: Store, files: File[], { onMedia, onErro
         }
         m.name = file.name;       // keep the name the user knows
         m.transcoded = true;
+        m.convertedBy = convertedBy;
         m.originalType = file.type || undefined;
       }
       store.addMedia(m);
       added.push(m);
-      tr.end(true, { kind: m.kind, duration: +m.duration.toFixed(3), width: m.width, height: m.height, transcoded: !!m.transcoded });
+      tr.end(true, { kind: m.kind, duration: +m.duration.toFixed(3), width: m.width, height: m.height, transcoded: !!m.transcoded, convertedBy: m.convertedBy });
       onMedia && onMedia(m);
       // background analysis (don't block UI)
       (async () => {

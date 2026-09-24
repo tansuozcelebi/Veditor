@@ -14,7 +14,12 @@ const CORE_SOURCES = [
   `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${CORE_VERSION}/dist/esm/`,
 ];
 
-export interface TranscodeProgress { ratio: number; stage: 'loading' | 'converting' }
+/** One step of a conversion, wherever it runs. `where` lets the UI say who is doing the work. */
+export interface TranscodeProgress {
+  ratio: number;
+  stage: 'loading' | 'converting' | 'uploading' | 'downloading';
+  where?: 'browser' | 'server';
+}
 
 /** Carries the tail of ffmpeg's own output, which names the codec or pixel format it refused. */
 export class FFmpegError extends Error {
@@ -44,7 +49,7 @@ export function loadFFmpeg(onProgress?: (p: TranscodeProgress) => void): Promise
     loading = (async () => {
       const base = await usableCoreBase();
       const ff = new FFmpeg();
-      onProgress?.({ ratio: 0, stage: 'loading' });
+      onProgress?.({ ratio: 0, stage: 'loading', where: 'browser' });
       await ff.load({
         coreURL: await toBlobURL(base + 'ffmpeg-core.js', 'text/javascript'),
         wasmURL: await toBlobURL(base + 'ffmpeg-core.wasm', 'application/wasm'),
@@ -92,7 +97,7 @@ function readStreams(lines: string[]): StreamSummary {
 export async function runFFmpeg(file: File, args: string[], outName: string, { onProgress, signal, type = 'video/webm', onStreams }: { onProgress?: (p: TranscodeProgress) => void; signal?: AbortSignal; type?: string; onStreams?: (s: StreamSummary) => void } = {}): Promise<File> {
   const ff = await loadFFmpeg(onProgress);
   const input = 'in_' + SAFE_NAME(file.name);
-  const onTick = ({ progress }: { progress: number }) => onProgress?.({ ratio: Math.max(0, Math.min(1, progress)), stage: 'converting' });
+  const onTick = ({ progress }: { progress: number }) => onProgress?.({ ratio: Math.max(0, Math.min(1, progress)), stage: 'converting', where: 'browser' });
   const abort = () => ff.terminate();
   // ffmpeg explains itself on stderr; keep the tail so a failure is readable instead of "exited with 1"
   const logTail: string[] = [];
@@ -102,7 +107,7 @@ export async function runFFmpeg(file: File, args: string[], outName: string, { o
   ff.on('log', onLog);
   try {
     await ff.writeFile(input, await fetchFile(file));
-    onProgress?.({ ratio: 0, stage: 'converting' });
+    onProgress?.({ ratio: 0, stage: 'converting', where: 'browser' });
     const code = await ff.exec(['-i', input, ...args, '-y', outName]);
     if (code !== 0) throw new FFmpegError(`ffmpeg exited with ${code}`, logTail.slice());
     // ffmpeg can finish "successfully" having dropped a stream it could not decode; compare what it

@@ -1,9 +1,10 @@
 // End-to-end smoke test: serves the app, drives it in headless Chromium and verifies
 // import → timeline editing → playback → voice-over recording → export (validated with ffmpeg).
 import http from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
+import net from 'node:net';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { join, extname } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import { findFfmpeg } from './gen-fixtures.mjs';
 
@@ -284,8 +285,94 @@ try {
   check('fade transition ramps alpha 0→1 over its duration', approx(trans.fx0, 0.1, 0.02) && approx(trans.fx1, 0.9, 0.02) && trans.fxN === 1, `alpha=${trans.fx0},${trans.fx1},${trans.fxN}`);
   check('fading-in clip blends over the layer below', trans.early[2] > trans.late[2] + 40 && trans.late[1] > trans.early[1] + 40, `early=${trans.early.slice(0, 3)} late=${trans.late.slice(0, 3)}`);
 
-  const layout = await page.evaluate(() => ({ docW: document.documentElement.scrollWidth, vw: window.innerWidth, inspector: document.getElementById('inspectorPanel').getBoundingClientRect().right, lang: document.documentElement.lang, title: document.getElementById('inspectorTitle').textContent }));
-  check('layout fits the viewport (inspector visible, no horizontal overflow)', layout.docW <= layout.vw && layout.inspector <= layout.vw && layout.inspector > layout.vw - 320, JSON.stringify(layout));
+  // ---- dockable panels ----
+  const box = () => page.evaluate(() => {
+    const rect = (id) => { const el = document.getElementById(id); if (!el) return null; const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), right: Math.round(r.right), bottom: Math.round(r.bottom) }; };
+    const panels = {};
+    for (const id of ['libraryPanel', 'previewPanel', 'inspectorPanel', 'sourcePanel', 'timelinePanel']) panels[id] = rect(id);
+    return { docW: document.documentElement.scrollWidth, vw: window.innerWidth, vh: window.innerHeight, lang: document.documentElement.lang, title: document.getElementById('inspectorTitle').textContent, panels, tabs: [...document.querySelectorAll('.dv-tab')].map((t) => t.textContent.trim()) };
+  });
+  const layout = await box();
+  const p = layout.panels;
+  check('layout fits the viewport (every panel visible, no horizontal overflow)',
+    layout.docW <= layout.vw && Object.values(p).every((b) => b && b.w > 60 && b.h > 60 && b.right <= layout.vw + 1 && b.bottom <= layout.vh + 1),
+    JSON.stringify({ docW: layout.docW, vw: layout.vw, panels: p }));
+  check('the default arrangement: settings top-left, the source player under it, the timeline across the bottom',
+    layout.tabs.length === 5 && p.inspectorPanel.x < p.previewPanel.x && p.sourcePanel.x === p.inspectorPanel.x && p.sourcePanel.y >= p.inspectorPanel.bottom - 40
+      && p.timelinePanel.y >= p.previewPanel.bottom - 40 && p.timelinePanel.w > layout.vw * 0.9 && p.libraryPanel.x > p.previewPanel.x,
+    JSON.stringify({ tabs: layout.tabs, inspector: p.inspectorPanel, source: p.sourcePanel, timeline: p.timelinePanel }));
+
+  // ---- source player: shows what is selected or dropped, and never plays over the timeline ----
+  const clipAId = await page.evaluate(() => [...window.veditor.store.media.values()].find((m) => m.name === 'clipA.webm').id);
+  await page.click(`.media-card[data-id="${clipAId}"]`);
+  const sourcePlay = await page.evaluate(async () => {
+    const v = document.getElementById('sourceVideo');
+    if (!v) return { shown: false };
+    await window.veditor.player.play();           // the timeline monitor is running…
+    const timelineWas = window.veditor.player.playing;
+    await v.play().catch(() => {});               // …and must stand down when the source plays
+    await new Promise((r) => setTimeout(r, 800));
+    const out = { shown: true, blob: v.currentSrc.startsWith('blob:'), t: v.currentTime, name: document.querySelector('#sourcePanel h2').textContent, timelineWas, timelineNow: window.veditor.player.playing };
+    v.pause();
+    return out;
+  });
+  check('the source player plays the selected clip and stops the timeline monitor',
+    sourcePlay.shown && sourcePlay.blob && sourcePlay.t > 0.2 && sourcePlay.name === 'clipA.webm' && sourcePlay.timelineWas === true && sourcePlay.timelineNow === false,
+    JSON.stringify(sourcePlay));
+
+  const droppedOnSource = await page.evaluate(async (bytes) => {
+    const stage = document.getElementById('sourceStage');
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(bytes)], 'dropped-clip.webm', { type: 'video/webm' }));
+    stage.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    stage.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    const shown = () => document.querySelector('#sourcePanel h2').textContent === 'dropped-clip.webm' && !!document.getElementById('sourceVideo')?.getAttribute('src')?.startsWith('blob:');
+    for (let i = 0; i < 100 && !shown(); i++) await new Promise((r) => setTimeout(r, 100));
+    return { name: document.querySelector('#sourcePanel h2').textContent, inLibrary: [...window.veditor.store.media.values()].some((m) => m.name === 'dropped-clip.webm'), src: !!document.getElementById('sourceVideo')?.getAttribute('src')?.startsWith('blob:') };
+  }, [...readFileSync(join(fixtures, 'clipB.webm'))]);
+  check('a file dropped on the source player is imported and shown there', droppedOnSource.name === 'dropped-clip.webm' && droppedOnSource.inLibrary && droppedOnSource.src === true, JSON.stringify(droppedOnSource));
+  await page.evaluate(() => { const { store } = window.veditor; const m = [...store.media.values()].find((x) => x.name === 'dropped-clip.webm'); if (m) store.removeMedia(m.id); });
+
+  // ---- panels can be hidden, brought back, rearranged and reset ----
+  await page.click('#btnLayout');
+  await page.click('#layoutMenu [data-panel="source"]');
+  await page.waitForTimeout(250);
+  const hidden = await page.evaluate(() => !!document.getElementById('sourcePanel'));
+  await page.click('#layoutMenu [data-panel="source"]');
+  await page.waitForTimeout(250);
+  const restored = await page.evaluate(() => !!document.getElementById('sourcePanel'));
+  await page.keyboard.press('Escape');
+  check('the layout menu hides a panel and brings it back', hidden === false && restored === true, JSON.stringify({ hidden, restored }));
+
+  // a real mouse drag of a tab, the way a user rearranges the workspace
+  const sourceTitle = await page.evaluate(() => window.veditor.dock.api.getPanel('source').title);
+  const groupsBefore = await page.evaluate(() => window.veditor.dock.api.groups.length);
+  const tabBox = await page.locator('.dv-tab').filter({ hasText: sourceTitle }).first().boundingBox();
+  const previewBox = await page.locator('#previewPanel').boundingBox();
+  await page.mouse.move(tabBox.x + tabBox.width / 2, tabBox.y + tabBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(previewBox.x + previewBox.width / 2, previewBox.y + previewBox.height / 2, { steps: 20 });
+  await page.mouse.move(previewBox.x + previewBox.width / 2 + 4, previewBox.y + previewBox.height / 2, { steps: 4 });
+  await page.waitForTimeout(300);
+  const dropTarget = await page.evaluate(() => !!document.querySelector('.dv-drop-target-anchor, .dv-drop-target'));
+  await page.mouse.up();
+  await page.waitForTimeout(800);
+  const dragged = await page.evaluate(() => ({
+    groups: window.veditor.dock.api.groups.length,
+    group: window.veditor.dock.api.getPanel('source').group.panels.map((x) => x.id),
+    saved: (localStorage.getItem('veditor.layout.v1') || '').includes('"source"'),
+  }));
+  check('a panel tab can be dragged onto another panel with the mouse, and the arrangement is stored',
+    dropTarget && dragged.groups === groupsBefore - 1 && dragged.group.includes('source') && dragged.group.includes('preview') && dragged.saved,
+    JSON.stringify({ dropTarget, groupsBefore, ...dragged }));
+
+  await page.evaluate(() => window.veditor.dock.reset());
+  await page.waitForTimeout(600);
+  const afterReset = await box();
+  check('the default arrangement can be restored, with its original proportions',
+    afterReset.panels.libraryPanel.x > afterReset.panels.previewPanel.x && afterReset.panels.sourcePanel.x === afterReset.panels.inspectorPanel.x && afterReset.tabs.length === 5
+      && approx(afterReset.panels.inspectorPanel.w, p.inspectorPanel.w, 2) && approx(afterReset.panels.libraryPanel.w, p.libraryPanel.w, 2) && approx(afterReset.panels.sourcePanel.h, p.sourcePanel.h, 2),
+    JSON.stringify(afterReset.panels));
   check('Turkish locale picks Turkish UI', layout.lang === 'tr' && /Özellikler|Klip|Kanal|Proje/.test(layout.title), layout.title);
   await page.screenshot({ path: join(outDir, 'editor.png') });
 
@@ -386,10 +473,19 @@ try {
     await p2.click('#btnPlay'); // pause
     const paused = await readPlay();
     check('real click on Play again pauses', !paused.playing && paused.actives === 0 && /play/.test(paused.btn), JSON.stringify(paused));
+    // a rearranged workspace must still be there after a trip through the host app's menu
+    await p2.evaluate(() => { const { api } = window.veditor.dock; api.getPanel('inspector').api.moveTo({ group: api.getPanel('library').group, position: 'center' }); });
+    await p2.waitForTimeout(700);
+    const stacked = await p2.evaluate(() => window.veditor.dock.api.getPanel('inspector').group.panels.map((x) => x.id));
     await p2.click('nav a[href="/dashboard"]');
     await p2.waitForFunction(() => !document.getElementById('previewPanel'));
     await p2.click('nav a[href="/video-editor"]');
     await p2.waitForFunction(() => window.veditor && window.veditor.tl && document.querySelectorAll('.clip').length === 1);
+    await p2.waitForTimeout(500);
+    const stackedAfter = await p2.evaluate(() => window.veditor.dock.api.getPanel('inspector').group.panels.map((x) => x.id));
+    check('the panel arrangement survives a trip through the menu', stacked.length === 2 && stackedAfter.join() === stacked.join(), JSON.stringify({ stacked, stackedAfter }));
+    await p2.evaluate(() => window.veditor.dock.reset());
+    await p2.waitForTimeout(500);
     await p2.click('#btnPlay');
     await p2.waitForTimeout(1500);
     const r2 = await readPlay();
@@ -401,6 +497,103 @@ try {
     failures++; console.error('❌ real-user run crashed:', e);
   } finally {
     await b2.close();
+  }
+}
+// ---- server-side conversion: when the host can run ffmpeg, the tab does not have to ----
+// Serves the same dist/ through PHP (as SiteGround does) so public/api/convert.php is live, and
+// checks the whole contract: the host converts, the editor prefers it, and when the host says no
+// the import still succeeds in the browser.
+{
+  const phpBin = spawnSync('sh', ['-c', 'command -v php'], { encoding: 'utf8' }).stdout.trim();
+  // A full ffmpeg is what a real host has; the Playwright build only demuxes WebM, so the source
+  // given to the server is chosen to match whatever this machine can actually read.
+  const systemFfmpeg = spawnSync('sh', ['-c', 'command -v ffmpeg'], { encoding: 'utf8' }).stdout.trim();
+  const hostFfmpeg = systemFfmpeg || findFfmpeg();
+  const demuxers = hostFfmpeg ? spawnSync(hostFfmpeg, ['-hide_banner', '-demuxers'], { encoding: 'utf8' }).stdout || '' : '';
+  const readsMp4 = /mov,mp4|mp4,/.test(demuxers);
+  const srcMp4 = join(outDir, 'phone-clip.mp4'); // the H.264 file the main run produced
+  if (!phpBin || !hostFfmpeg || !existsSync(srcMp4)) {
+    console.log(`⏭  server-side conversion not tested (php: ${phpBin || 'missing'}, ffmpeg: ${hostFfmpeg || 'missing'}, fixture: ${existsSync(srcMp4)})`);
+  } else {
+    const jobs = join(outDir, 'convert-jobs');
+    rmSync(jobs, { recursive: true, force: true }); mkdirSync(jobs, { recursive: true });
+    const port = await new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); }); });
+    const phpBase = `http://127.0.0.1:${port}`;
+    const php = spawn(phpBin, ['-d', 'upload_max_filesize=64M', '-d', 'post_max_size=64M', '-S', `127.0.0.1:${port}`, '-t', dist, join(root, 'test/php-router.php')], {
+      env: { ...process.env, VEDITOR_FFMPEG: hostFfmpeg, VEDITOR_WORKDIR: jobs, VEDITOR_MAX_JOBS: '2', PHP_CLI_SERVER_WORKERS: '6' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const phpLog = [];
+    php.stdout.on('data', (d) => phpLog.push(String(d)));
+    php.stderr.on('data', (d) => phpLog.push(String(d)));
+    let health = null;
+    for (let i = 0; i < 60 && !health; i++) {
+      try { const r = await fetch(`${phpBase}/api/convert.php?action=health`); if (r.ok) health = await r.json(); } catch { /* not up yet */ }
+      if (!health) await new Promise((r) => setTimeout(r, 250));
+    }
+    const b4 = await chromium.launch({ channel: 'chromium' });
+    const p4 = await b4.newPage({ viewport: { width: 1400, height: 900 }, locale: 'tr-TR' });
+    const errs4 = [];
+    p4.on('pageerror', (e) => errs4.push(e.message));
+    try {
+      check('the host advertises its conversion service', !!health?.ok && !!health.ffmpeg && !!health.video && health.maxBytes > 1e6,
+        JSON.stringify(health || { phpLog: phpLog.slice(-3) }));
+
+      await p4.goto(phpBase + '/video-editor');
+      await p4.waitForFunction(() => window.veditor && window.veditor.tl, null, { timeout: 30000 });
+      const seen = await p4.evaluate(() => window.veditor.server.probeServer());
+      check('the editor detects the conversion service', !!seen?.ok && seen.ffmpeg === health.ffmpeg, JSON.stringify(seen));
+
+      // 1. the real thing: upload → convert on the host → download → import the result
+      const source = readsMp4 ? srcMp4 : join(fixtures, 'clipA.webm'); // this ffmpeg build may only read WebM
+      const real = await p4.evaluate(async ({ bytes, name, type }) => {
+        const stages = [];
+        const src = new File([new Uint8Array(bytes)], name, { type });
+        const out = await window.veditor.server.transcodeOnServer(src, { onProgress: (p) => stages.push(`${p.stage}:${p.where}`) });
+        const added = await window.veditor.importFiles([out]);
+        const m = added[0];
+        return { bytes: out.size, type: out.type, name: out.name, stages: [...new Set(stages)], kind: m?.kind, duration: +(m?.duration || 0).toFixed(2), w: m?.width || 0 };
+      }, { bytes: [...readFileSync(source)], name: source.split('/').pop(), type: readsMp4 ? 'video/mp4' : 'video/webm' });
+      check('the host converts a real upload and the result plays',
+        real.bytes > 10000 && real.type === 'video/webm' && real.name.endsWith('.webm') && real.kind === 'video' && approx(real.duration, 6, 0.4) && real.w === 640
+          && real.stages.includes('uploading:server') && real.stages.includes('converting:server'),
+        JSON.stringify(real));
+      await new Promise((r) => setTimeout(r, 1500)); // the client releases the job once it has the file
+      check('the server keeps no leftovers once the file has been collected', readdirSync(jobs).length === 0, readdirSync(jobs).join(', '));
+      await p4.evaluate(() => { const { store } = window.veditor; for (const m of [...store.media.values()]) store.removeMedia(m.id); window.veditor.server.resetServerProbe(); });
+
+      // 2. the import path must prefer the host over ffmpeg.wasm for a file the browser cannot decode.
+      // The host's own ffmpeg build may not read MP4 (Playwright's cannot), so the job protocol is
+      // answered here with a real converted file – what the decision, upload and download code sees.
+      const converted = readFileSync(join(fixtures, 'clipA.webm'));
+      await p4.route('**/api/convert.php?action=start*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, job: 'a'.repeat(24) }) }));
+      await p4.route('**/api/convert.php?action=status*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, state: 'done', progress: 1 }) }));
+      await p4.route('**/api/convert.php?action=result*', (route) => route.fulfill({ status: 200, contentType: 'video/webm', body: converted }));
+      await p4.route('**/api/convert.php?action=cancel*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }));
+      await p4.setInputFiles('#fileInput', srcMp4);
+      await p4.waitForFunction(() => window.veditor.store.media.size === 1, null, { timeout: 120000 });
+      await p4.waitForFunction(() => [...window.veditor.store.media.values()].every((m) => !m.analyzing), null, { timeout: 120000 });
+      const onServer = await p4.evaluate(() => { const m = [...window.veditor.store.media.values()][0]; return { name: m.name, kind: m.kind, duration: +m.duration.toFixed(2), w: m.width, transcoded: !!m.transcoded, by: m.convertedBy, thumbs: m.thumbnails.length }; });
+      check('a file the browser cannot decode goes to the host, not to the tab',
+        onServer.by === 'server' && onServer.transcoded && onServer.name === 'phone-clip.mp4' && onServer.kind === 'video' && approx(onServer.duration, 6, 0.4) && onServer.w === 640 && onServer.thumbs >= 4,
+        JSON.stringify(onServer));
+
+      // 3. the host may be down, busy or misconfigured tomorrow: the import must still succeed in the tab
+      await p4.evaluate(() => { const { store } = window.veditor; for (const m of [...store.media.values()]) store.removeMedia(m.id); window.veditor.server.resetServerProbe(); });
+      await p4.unroute('**/api/convert.php?action=start*');
+      await p4.route('**/api/convert.php?action=start*', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'no ffmpeg', reason: 'ffmpeg-missing' }) }));
+      await p4.setInputFiles('#fileInput', srcMp4);
+      await p4.waitForFunction(() => window.veditor.store.media.size === 1, null, { timeout: 240000 });
+      await p4.waitForFunction(() => [...window.veditor.store.media.values()].every((m) => !m.analyzing), null, { timeout: 120000 });
+      const fellBack = await p4.evaluate(() => { const m = [...window.veditor.store.media.values()][0]; return { kind: m.kind, duration: +m.duration.toFixed(2), w: m.width, by: m.convertedBy }; });
+      check('when the host refuses the job the browser converts it instead', fellBack.by === 'browser' && fellBack.kind === 'video' && approx(fellBack.duration, 6, 0.4) && fellBack.w === 640, JSON.stringify(fellBack));
+      check('no page errors (server conversion run)', errs4.length === 0, errs4.join(' ; ').slice(0, 300));
+    } catch (e) {
+      failures++; console.error('❌ server conversion run crashed:', e, phpLog.slice(-5).join(''));
+    } finally {
+      await b4.close();
+      php.kill('SIGTERM');
+    }
   }
 }
 // ---- a restrictive Content-Security-Policy must be reported, not mistaken for broken files ----
