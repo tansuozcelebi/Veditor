@@ -260,7 +260,7 @@ async function reportConvertApi(url) {
       return;
     }
     const h = await res.json();
-    const formats = Object.entries(h.formats || {}).map(([f, c]) => `${f} (${c.video}${c.audio ? ' + ' + c.audio : ', no audio'})`).join(', ');
+    const formats = Object.entries(h.formats || {}).map(([f, c]) => `${f} (${c.video}${c.audio ? ' + ' + c.audio : ', no audio'}${c.tested === false ? ', not verifiable on this build' : ''})`).join(', ');
     if (h.ok) console.log(`  ✔ server-side conversion: ffmpeg ${h.ffmpeg} → ${formats}, up to ${fmtBytes(h.maxBytes)} per file`);
     else if (h.reason === 'no-encoder') console.log(`  ℹ server-side conversion: this host has ffmpeg ${h.ffmpeg} but no encoder the browser can play (needs libvpx for WebM or libx264 for MP4) – conversions will run in the browser. Upload a full static ffmpeg to public_html/api/bin/ffmpeg to enable it.`);
     else console.log(`  ℹ server-side conversion: unavailable (${h.reason}) – conversions will run in the browser. Upload a static ffmpeg to public_html/api/bin/ffmpeg to enable it.`);

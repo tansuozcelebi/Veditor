@@ -561,7 +561,8 @@ try {
     const errs4 = [];
     p4.on('pageerror', (e) => errs4.push(e.message));
     try {
-      check('the host advertises what it can encode', !!health?.ok && !!health.ffmpeg && !!health.formats?.webm?.video && health.maxBytes > 1e6,
+      // this ffmpeg is too small to generate the probe clip, so the encoder list is trusted and said to be untested
+      check('the host advertises what it can encode', !!health?.ok && !!health.ffmpeg && !!health.formats?.webm?.video && health.formats.webm.tested === false && health.maxBytes > 1e6,
         JSON.stringify(health || { phpLog: phpLog.slice(-3) }));
 
       await p4.goto(phpBase + '/video-editor');

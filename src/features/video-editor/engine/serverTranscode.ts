@@ -19,7 +19,7 @@ export interface ServerHealth {
   /** Why the host cannot convert: ffmpeg-missing | processes-disabled | workdir-not-writable | ffmpeg-not-runnable | no-encoder */
   reason: string | null;
   /** What this host can write, per container – a build without libvpx offers mp4 only, or nothing. */
-  formats: Partial<Record<ServerFormat, { video: string; audio: string | null }>>;
+  formats: Partial<Record<ServerFormat, { video: string; audio: string | null; tested?: boolean }>>;
   maxBytes: number;
   maxJobs: number;
   tokenRequired: boolean;
