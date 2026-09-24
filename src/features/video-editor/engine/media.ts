@@ -2,7 +2,7 @@
 import { uid, IMAGE_DEFAULT_DURATION, type Store } from './state';
 import type { MediaItem, MediaKind, Thumbnail } from './types';
 import { transcodeToPlayable, type StreamSummary, type TranscodeProgress } from './transcode';
-import { probeServer, resetServerProbe, ServerConvertError, transcodeOnServer } from './serverTranscode';
+import { chooseFormat, probeServer, resetServerProbe, ServerConvertError, transcodeOnServer } from './serverTranscode';
 import { log, trace } from './diagnostics';
 
 const THUMB_COUNT = 12;
@@ -217,11 +217,15 @@ const RECOVERABLE: ImportFailReason[] = ['codec', 'decode'];
  */
 async function convertForPlayback(file: File, tr: ReturnType<typeof trace> | undefined, opts: { onProgress?: (p: TranscodeProgress) => void; signal?: AbortSignal }): Promise<{ file: File; by: 'server' | 'browser' }> {
   const health = await probeServer().catch(() => null);
-  const onServer = !!health?.ok && file.size <= health.maxBytes;
+  const format = chooseFormat(health);              // a container both the host and this browser support
+  const onServer = !!health?.ok && !!format && file.size <= health.maxBytes;
   tr?.step('choosing a converter', {
-    converter: onServer ? 'server (ffmpeg)' : 'browser (ffmpeg.wasm)',
+    converter: onServer ? `server (ffmpeg → ${format})` : 'browser (ffmpeg.wasm)',
     serverFfmpeg: health?.ffmpeg ?? null,
-    why: !health ? 'this host has no conversion service' : health.ok ? (onServer ? 'the host converts natively' : `the file is larger than the host accepts (${health.maxBytes} bytes)`) : health.reason,
+    why: !health ? 'this host has no conversion service'
+      : !health.ok ? health.reason
+      : !format ? `the host writes ${Object.keys(health.formats || {}).join(', ') || 'nothing'}, which this browser cannot play`
+      : onServer ? 'the host converts natively' : `the file is larger than the host accepts (${health.maxBytes} bytes)`,
   });
   if (onServer) {
     try {
@@ -279,7 +283,7 @@ export async function importFiles(store: Store, files: File[], { onMedia, onErro
             },
             signal,
           }));
-          tr.step('converted', { from: file.type || '(unknown)', to: 'video/webm', bytes: converted.size, by: convertedBy });
+          tr.step('converted', { from: file.type || '(unknown)', to: converted.type || '(unknown)', bytes: converted.size, by: convertedBy });
         } catch (te) {
           tr.step('conversion failed', te);
           console.warn('transcode failed', file.name, te);

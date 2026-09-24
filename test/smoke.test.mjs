@@ -536,13 +536,14 @@ try {
     const errs4 = [];
     p4.on('pageerror', (e) => errs4.push(e.message));
     try {
-      check('the host advertises its conversion service', !!health?.ok && !!health.ffmpeg && !!health.video && health.maxBytes > 1e6,
+      check('the host advertises what it can encode', !!health?.ok && !!health.ffmpeg && !!health.formats?.webm?.video && health.maxBytes > 1e6,
         JSON.stringify(health || { phpLog: phpLog.slice(-3) }));
 
       await p4.goto(phpBase + '/video-editor');
       await p4.waitForFunction(() => window.veditor && window.veditor.tl, null, { timeout: 30000 });
-      const seen = await p4.evaluate(() => window.veditor.server.probeServer());
-      check('the editor detects the conversion service', !!seen?.ok && seen.ffmpeg === health.ffmpeg, JSON.stringify(seen));
+      const seen = await p4.evaluate(async () => { const h = await window.veditor.server.probeServer(); return { h, format: window.veditor.server.chooseFormat(h), playable: window.veditor.server.playableFormats() }; });
+      check('the editor detects the service and picks a container both sides support',
+        !!seen.h?.ok && seen.h.ffmpeg === health.ffmpeg && seen.format === 'webm' && seen.playable.includes('webm'), JSON.stringify(seen));
 
       // 1. the real thing: upload → convert on the host → download → import the result
       const source = readsMp4 ? srcMp4 : join(fixtures, 'clipA.webm'); // this ffmpeg build may only read WebM
@@ -578,8 +579,23 @@ try {
         onServer.by === 'server' && onServer.transcoded && onServer.name === 'phone-clip.mp4' && onServer.kind === 'video' && approx(onServer.duration, 6, 0.4) && onServer.w === 640 && onServer.thumbs >= 4,
         JSON.stringify(onServer));
 
-      // 3. the host may be down, busy or misconfigured tomorrow: the import must still succeed in the tab
+      // 3. a host with ffmpeg but only an encoder this browser cannot play (what veditor.krea.tr has:
+      //    ffmpeg without libvpx) must be skipped before the upload, not after it
       await p4.evaluate(() => { const { store } = window.veditor; for (const m of [...store.media.values()]) store.removeMedia(m.id); window.veditor.server.resetServerProbe(); });
+      let uploads = 0;
+      await p4.unroute('**/api/convert.php?action=start*');
+      await p4.route('**/api/convert.php?action=health*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, ffmpeg: '9.0', reason: null, formats: { mp4: { video: 'libx264', audio: 'aac' } }, maxBytes: 268435456, maxJobs: 2, tokenRequired: false }) }));
+      await p4.route('**/api/convert.php?action=start*', (route) => { uploads++; route.fulfill({ status: 503, contentType: 'application/json', body: '{"ok":false,"reason":"no-encoder"}' }); });
+      await p4.setInputFiles('#fileInput', srcMp4);
+      await p4.waitForFunction(() => window.veditor.store.media.size === 1, null, { timeout: 240000 });
+      await p4.waitForFunction(() => [...window.veditor.store.media.values()].every((m) => !m.analyzing), null, { timeout: 120000 });
+      const unplayable = await p4.evaluate(() => { const m = [...window.veditor.store.media.values()][0]; return { by: m.convertedBy, w: m.width, format: window.veditor.server.chooseFormat({ ok: true, formats: { mp4: {} } }) }; });
+      check('a host that can only write a format this browser cannot play is skipped before the upload',
+        unplayable.by === 'browser' && unplayable.w === 640 && uploads === 0 && unplayable.format === null, JSON.stringify({ ...unplayable, uploads }));
+
+      // 4. the host may also be down, busy or misconfigured: the import must still succeed in the tab
+      await p4.evaluate(() => { const { store } = window.veditor; for (const m of [...store.media.values()]) store.removeMedia(m.id); window.veditor.server.resetServerProbe(); });
+      await p4.unroute('**/api/convert.php?action=health*');
       await p4.unroute('**/api/convert.php?action=start*');
       await p4.route('**/api/convert.php?action=start*', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'no ffmpeg', reason: 'ffmpeg-missing' }) }));
       await p4.setInputFiles('#fileInput', srcMp4);

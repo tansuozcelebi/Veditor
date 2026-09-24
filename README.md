@@ -281,25 +281,37 @@ Uç nokta derlemeyle birlikte gider: `public/api/convert.php` → `dist/api/conv
 
 | İstek | Yanıt |
 | --- | --- |
-| `GET api/convert.php?action=health` | `{ok, ffmpeg, reason, video, audio, maxBytes, maxJobs, tokenRequired}` |
-| `POST api/convert.php?action=start` (multipart `file`) | `{ok, job}` |
+| `GET api/convert.php?action=health` | `{ok, ffmpeg, reason, formats, maxBytes, maxJobs, tokenRequired}` |
+| `POST api/convert.php?action=start` (multipart `file`, `formats=webm,mp4`) | `{ok, job, format}` |
 | `GET api/convert.php?action=status&job=…` | `{state: running\|done\|error, progress, log}` |
 | `GET api/convert.php?action=result&job=…` | dönüştürülmüş WebM dosyası |
 | `POST api/convert.php?action=cancel&job=…` | işi durdurur ve dosyaları siler |
+
+**Hangi biçime dönüştürülür**
+
+Sunucu, kendi ffmpeg'inin gerçekten yazabildiği kapsayıcıları `health` yanıtında `formats` altında bildirir:
+`webm` (VP8/VP9 – telifli kodekler olmadan derlenmiş tarayıcılar dahil her yerde oynar) ve/veya `mp4`
+(H.264 – Chrome, Edge, Safari). Tarayıcı `canPlayType` ile kendi oynatabildiklerini belirler ve yalnızca
+**iki tarafın da desteklediği** biçimi ister. Ortak biçim yoksa dosya sunucuya **hiç yüklenmez**; doğrudan
+tarayıcıdaki dönüştürücü çalışır. (SiteGround'un sistem ffmpeg'i 9.0 sürümünde `libvpx` ve `libx264`
+içermediği için tam olarak bu durumdadır — bu yüzden aşağıdaki statik derleme gerekir.)
 
 **Sunucuda açmak için**
 
 1. Barındırmada PHP çalışıyor olmalı (SiteGround'da varsayılan olarak çalışır) ve `proc_open`/`shell_exec`
    kapalı olmamalı. `action=health` çıktısındaki `reason` alanı eksik olanı söyler.
-2. Sunucuda `ffmpeg` yoksa statik bir Linux derlemesini `public_html/api/bin/ffmpeg` konumuna yükleyip
-   `chmod 755 bin/ffmpeg` yapın (ör. johnvansickle.com/ffmpeg statik derlemeleri). Betik önce `bin/ffmpeg`,
-   sonra sistem yollarını, en son `PATH`'i dener.
+2. Sunucuda `ffmpeg` yoksa **ya da sistemdeki derleme `libvpx`/`libx264` içermiyorsa** (SiteGround'da
+   durum budur), **tam** bir statik Linux derlemesini `public_html/api/bin/ffmpeg` konumuna yükleyip
+   `chmod 755 bin/ffmpeg` yapın (ör. johnvansickle.com/ffmpeg statik derlemeleri; bunlarda libvpx, libvorbis
+   ve libx264 bulunur). Betik önce `bin/ffmpeg`, sonra sistem yollarını, en son `PATH`'i dener.
+   Kodek desteği olmayan bir ffmpeg `health` yanıtında `ok:false, reason:"no-encoder"` döner; editör bunu
+   görür ve hiç yükleme yapmadan tarayıcıda dönüştürür.
 3. Gerekirse `public/api/config.example.php` dosyasını `config.php` olarak kopyalayıp yol, boyut sınırı,
    eşzamanlı iş sayısı ve (uç nokta herkese açık olmasın isterseniz) `token` değerini ayarlayın.
    `.htaccess` hem `config.php`'yi hem de `bin/ffmpeg` dosyasını HTTP'ye kapatır.
 4. Her dağıtımdan sonra `npm run deploy` çıktısı sunucunun ne sunduğunu yazar:
-   `✔ server-side conversion: ffmpeg n6.1 (libvpx + libvorbis), up to 64 MB per file` ya da neden
-   kullanılamadığı. Tarayıcı konsolundaki ortam raporunda da aynı satır bulunur.
+   `✔ server-side conversion: ffmpeg n6.1 → webm (libvpx + libvorbis), mp4 (libx264 + aac), up to 64 MB per file`
+   ya da neden kullanılamadığı. Tarayıcı konsolundaki ortam raporunda da aynı satır bulunur.
 
 İşler geçici bir klasörde tutulur, biten/terk edilen işler 30 dakika sonra (veya istemci dosyayı aldıktan
 hemen sonra) silinir; aynı anda en fazla `max_jobs` dönüştürme çalışır ve iptal edilen bir iş sunucuda
