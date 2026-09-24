@@ -40,6 +40,8 @@ export interface MediaItem {
   peaksSkipped?: boolean;
   /** The file was converted with ffmpeg.wasm because the browser could not decode the original. */
   transcoded?: boolean;
+  /** Where the conversion ran, when one was needed. */
+  convertedBy?: 'server' | 'browser';
   originalType?: string;
 }
 

@@ -102,13 +102,20 @@ src/features/video-editor/         ▶ ÖZELLİK MODÜLÜ (host uygulamaya kopya
   hooks/useImportFiles.ts          Bildirimli dosya içe aktarma
   engine/types.ts                  Track, Clip, Project, MediaItem, Export* tipleri
   engine/state.ts                  Proje modeli, seçim, geri al / yeniden yap, yerleşim/çakışma, bölme, biçimlendirme
-  engine/media.ts                  İçe aktarma, metadata, küçük resimler, dalga formu
+  engine/media.ts                  İçe aktarma, metadata, küçük resimler, dalga formu, dönüştürücü seçimi
+  engine/transcode.ts              Tarayıcıda dönüştürme (ffmpeg.wasm): çekirdek yükleme, yeniden deneme merdiveni
+  engine/serverTranscode.ts        Sunucuda dönüştürme istemcisi (yükle → sorgula → indir), sağlık yoklaması
+  engine/diagnostics.ts            Konsol ortam raporu ve içe aktarma izi
+  engine/csp.ts                    Güvenlik politikası ihlallerinin kaydı
   engine/player.ts                 Oynatma motoru: AudioContext saati, Web Audio miks grafı, Canvas kompozit, geçişler, yazı
   engine/timeline.ts               Zaman çizelgesi DOM motoru (cetvel, sürükleme/kırpma/yapışma) – React ref ile sarılır
   engine/exporter.ts               MediaRecorder tabanlı dışa aktarma
   engine/webm-fix.ts               WebM çıktısına Duration alanı ekleyen EBML yamalayıcı
   engine/i18n.ts                   TR / EN çeviriler
+public/api/convert.php             Sunucu tarafı dönüştürme uç noktası (PHP + ffmpeg, işler halinde)
+public/api/config.example.php      Sunucu dönüştürme ayarları örneği (yol, sınırlar, token)
 test/                              Playwright uçtan uca duman testi (üretim derlemesine karşı) ve fikstür üretici
+test/php-router.php                Testte dist/ klasörünü PHP ile sunar (SPA yedeği + gerçek API)
 ```
 
 **Katmanlar:** `engine/` React'ten bağımsız, tip güvenli sınıflardan oluşur (Store olay yayar, Player/Exporter
@@ -192,6 +199,9 @@ Test, üretim derlemesini yerel bir sunucudan (SPA yedeği ile) başsız Chromiu
 (iki VP8 video, WAV ton, PNG) üretir, içe aktarma → yerleştirme → bölme/geri alma → fare ile sürükleme/kırpma →
 oynatma/kompozit/ızgara → sesi ayırma → sahte mikrofonla seslendirme kaydı → geçişler → yazı katmanı → sağ tık
 menüsü → proje kaydet/aç → dışa aktarma akışını doğrular ve çıktıyı Playwright ile gelen ffmpeg ile kontrol eder.
+Ayrıca ayrı tarayıcı oturumlarında gerçek tıklama ile oynatma, dar bir CSP altındaki davranış ve – makinede PHP
+varsa – `dist/` klasörünü PHP ile sunarak **sunucu tarafında dönüştürme** uçtan uca sınanır (sunucu dönüştürür,
+editör sunucuyu tercih eder, sunucu reddettiğinde tarayıcıya düşülür, işler sunucuda temizlenir).
 Çıktılar `test/output/` altına yazılır.
 
 ### Otomatik birleştirme (auto-merge)
@@ -206,8 +216,9 @@ taslağa çevirmek otomatik birleştirmeyi durdurur.
 Tarayıcılar yalnızca kendi derlemelerinde bulunan kodekleri açar: telifli kodekler olmadan derlenmiş Chromium
 sürümleri **H.264/AAC** dosyalarını (telefon ve WhatsApp videolarının neredeyse tamamı) reddeder, HEVC/H.265,
 ProRes, DivX ve WMV'yi ise hiçbir tarayıcı açmaz. Veditor bu boşluğu kendi kodek setiyle kapatır: tarayıcı bir
-dosyayı çözemezse dosya **ffmpeg.wasm** ile (açık kaynak, `@ffmpeg/core`) WebM'e (VP8 + Vorbis) dönüştürülür ve
-öyle eklenir. Kullanıcı yalnızca bir ilerleme bildirimi görür; başka bir işlem yapması gerekmez.
+dosyayı çözemezse dosya WebM'e (VP8 + Vorbis) dönüştürülüp öyle eklenir: sitenin sunucusunda `ffmpeg` varsa
+**sunucuda** (hızlı yol, aşağıya bakın), yoksa tarayıcıda **ffmpeg.wasm** ile (açık kaynak, `@ffmpeg/core`).
+Kullanıcı yalnızca bir ilerleme bildirimi görür; başka bir işlem yapması gerekmez.
 
 | Tür | Doğrudan açılanlar | Otomatik dönüştürülenler |
 | --- | --- | --- |
@@ -233,6 +244,43 @@ dosyayı çözemezse dosya **ffmpeg.wasm** ile (açık kaynak, `@ffmpeg/core`) W
 - Dönüştürme de başarısız olursa bildirim nedenini söyler (bozuk dosya, okunamadı, süre doldu). 400 MB'tan büyük
   dosyalarda dalga formu çizilmez; klip yine de normal kullanılır.
 
+### Sunucu tarafında dönüştürme (hızlı yol)
+
+Tarayıcıdaki dönüştürme her yerde çalışır ama tek iş parçacıklı WebAssembly'de koştuğu için uzun bir HEVC
+klibi dakikalar sürebilir. Sitenin kendi sunucusunda `ffmpeg` varsa Veditor aynı işi **sunucuda** yaptırır;
+tarayıcı yalnızca dosyayı yükler ve sonucu indirir. Sunucu yoksa, meşgulse, dosya limitin üstündeyse ya da
+dönüştürme başarısız olursa otomatik olarak tarayıcıdaki dönüştürücüye düşülür – kullanıcı fark etmez,
+yalnızca bildirim metni "sunucuda dönüştürülüyor" yerine "dönüştürülüyor" der.
+
+Uç nokta derlemeyle birlikte gider: `public/api/convert.php` → `dist/api/convert.php`.
+
+| İstek | Yanıt |
+| --- | --- |
+| `GET api/convert.php?action=health` | `{ok, ffmpeg, reason, video, audio, maxBytes, maxJobs, tokenRequired}` |
+| `POST api/convert.php?action=start` (multipart `file`) | `{ok, job}` |
+| `GET api/convert.php?action=status&job=…` | `{state: running\|done\|error, progress, log}` |
+| `GET api/convert.php?action=result&job=…` | dönüştürülmüş WebM dosyası |
+| `POST api/convert.php?action=cancel&job=…` | işi durdurur ve dosyaları siler |
+
+**Sunucuda açmak için**
+
+1. Barındırmada PHP çalışıyor olmalı (SiteGround'da varsayılan olarak çalışır) ve `proc_open`/`shell_exec`
+   kapalı olmamalı. `action=health` çıktısındaki `reason` alanı eksik olanı söyler.
+2. Sunucuda `ffmpeg` yoksa statik bir Linux derlemesini `public_html/api/bin/ffmpeg` konumuna yükleyip
+   `chmod 755 bin/ffmpeg` yapın (ör. johnvansickle.com/ffmpeg statik derlemeleri). Betik önce `bin/ffmpeg`,
+   sonra sistem yollarını, en son `PATH`'i dener.
+3. Gerekirse `public/api/config.example.php` dosyasını `config.php` olarak kopyalayıp yol, boyut sınırı,
+   eşzamanlı iş sayısı ve (uç nokta herkese açık olmasın isterseniz) `token` değerini ayarlayın.
+   `.htaccess` hem `config.php`'yi hem de `bin/ffmpeg` dosyasını HTTP'ye kapatır.
+4. Her dağıtımdan sonra `npm run deploy` çıktısı sunucunun ne sunduğunu yazar:
+   `✔ server-side conversion: ffmpeg n6.1 (libvpx + libvorbis), up to 64 MB per file` ya da neden
+   kullanılamadığı. Tarayıcı konsolundaki ortam raporunda da aynı satır bulunur.
+
+İşler geçici bir klasörde tutulur, biten/terk edilen işler 30 dakika sonra (veya istemci dosyayı aldıktan
+hemen sonra) silinir; aynı anda en fazla `max_jobs` dönüştürme çalışır ve iptal edilen bir iş sunucuda
+gerçekten sonlandırılır. İstemciden gelen hiçbir metin kabuk komutuna girmez: dosya adı sunucuda üretilir,
+tüm parametreler `escapeshellarg` ile kaçırılır.
+
 ### Konsol tanılaması
 
 Her içe aktarma tarayıcıda olup bittiği için hata ayıklama bilgisi konsola yazılır (F12 → Console):
@@ -243,7 +291,8 @@ Her içe aktarma tarayıcıda olup bittiği için hata ayıklama bilgisi konsola
   metadata sonucu, tarayıcı reddettiyse `MediaError` kodu ve mesajı, dönüştürme kararı, dönüştürme ilerlemesi
   ve sonucu, küçük resim / dalga formu sayıları. Başarısız içe aktarmalar katlanmamış bir grup olarak açılır.
 - `window.veditor.diagnostics()` ile ortam raporunu istediğiniz an tekrar alabilirsiniz;
-  `window.veditor` ayrıca `store`, `player`, `importFiles` ve `ffmpeg` yardımcılarını da verir.
+  `window.veditor` ayrıca `store`, `player`, `importFiles`, `ffmpeg` (tarayıcı dönüştürücüsü) ve
+  `server` (sunucu dönüştürücüsü: `probeServer()`, `transcodeOnServer()`, `setServerToken()`) verir.
 
 Bir dosya açılmıyorsa konsoldaki `[veditor] import ✖ …` grubu nedeni doğrudan gösterir: kodek desteği yok,
 dosya bozuk, süre doldu ya da sayfanın güvenlik politikası engelliyor.

@@ -14,6 +14,7 @@ export function useImportFiles() {
     const abort = new AbortController();
     const converting = new Map<string, string | number>(); // file name → toast id
     const startedAt = new Map<string, number>();
+    const stageOf = new Map<string, string>();
     const clock = (name: string, ratio: number) => {
       const started = startedAt.get(name) ?? Date.now();
       const elapsed = (Date.now() - started) / 1000;
@@ -29,12 +30,17 @@ export function useImportFiles() {
           if (id !== undefined) toast.dismiss(id);
           converting.delete(file.name);
           startedAt.delete(file.name);
+          stageOf.delete(file.name);
           return;
         }
-        if (!startedAt.has(file.name)) startedAt.set(file.name, Date.now());
-        const msg = p.stage === 'loading'
-          ? t('library.convertingLoad', { name: file.name })
-          : t('library.converting', { name: file.name, pct: Math.round(p.ratio * 100), time: clock(file.name, p.ratio) });
+        // the elapsed/remaining clock measures the current stage, not the upload that preceded it
+        if (stageOf.get(file.name) !== p.stage) { stageOf.set(file.name, p.stage); startedAt.set(file.name, Date.now()); }
+        const pct = Math.round(p.ratio * 100);
+        // The work happens either on the host or in this tab; say which, so a slow conversion is explainable.
+        const msg = p.stage === 'loading' ? t('library.convertingLoad', { name: file.name })
+          : p.stage === 'uploading' ? t('library.uploading', { name: file.name, pct })
+          : p.stage === 'downloading' ? t('library.downloading', { name: file.name, pct })
+          : t(p.where === 'server' ? 'library.convertingServer' : 'library.converting', { name: file.name, pct, time: clock(file.name, p.ratio) });
         converting.set(file.name, toast.loading(msg, {
           id,
           duration: Infinity,

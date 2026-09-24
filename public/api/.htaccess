@@ -1,0 +1,16 @@
+# The conversion endpoint is a normal PHP script; keep everything else here private.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^ - [L]
+</IfModule>
+<FilesMatch "\.(php)$">
+  Require all granted
+</FilesMatch>
+<FilesMatch "^(config\.php|config\.example\.php|.*\.log)$">
+  Require all denied
+</FilesMatch>
+# the uploaded ffmpeg build and any job leftovers are never downloadable
+<FilesMatch "^(ffmpeg|ffprobe|.*\.webm|input\..*)$">
+  Require all denied
+</FilesMatch>
+Options -Indexes

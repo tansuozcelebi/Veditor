@@ -15,6 +15,7 @@ import { OpenProjectDialog } from './OpenProjectDialog';
 import { TEXT_DEFAULT_DURATION, formatTime, uid } from '../engine/state';
 import { supportedFormats } from '../engine/exporter';
 import { loadFFmpeg, runFFmpeg, transcodeToPlayable } from '../engine/transcode';
+import { probeServer, resetServerProbe, setServerToken, transcodeOnServer } from '../engine/serverTranscode';
 import { cspViolations, isLocalMediaBlock, onCspViolation } from '../engine/csp';
 import { diagnostics, log, logDiagnostics } from '../engine/diagnostics';
 import type { Timeline } from '../engine/timeline';
@@ -221,7 +222,7 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
 
   // ---------- debug / test handle ----------
   useEffect(() => {
-    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable }, diagnostics: () => logDiagnostics(CODEC_CORE_URL), rawDiagnostics: () => diagnostics(CODEC_CORE_URL) };
+    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable }, server: { probeServer, transcodeOnServer, setServerToken, resetServerProbe }, diagnostics: () => logDiagnostics(CODEC_CORE_URL), rawDiagnostics: () => diagnostics(CODEC_CORE_URL) };
     log('debug handle ready – window.veditor (diagnostics(), store, player, importFiles …)');
     return () => { delete (window as any).veditor; };
   }, [store, player, exporter, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, importFiles]);

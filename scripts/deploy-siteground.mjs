@@ -161,6 +161,9 @@ if (cfg.siteUrl && !flags.dryRun && cfg.verify !== 'off') {
   // the policy is often attached to HTML only (header or an injected <meta>), so check the page itself
   results.push(await checkCsp(`${cfg.siteUrl}/?csp-check=${Date.now()}`, assets.length ? new URL(assets[0], cfg.siteUrl + '/').href : null));
 
+  // 6. server-side conversion is optional: report what the host offers, never fail the deploy for it
+  await reportConvertApi(new URL(`${base}api/convert.php?action=health`, cfg.siteUrl + '/').href);
+
   const failed = results.filter((r) => !r.ok);
   const blocked = failed.length > 0 && failed.every((r) => r.blocked);
   if (!failed.length) console.log('✔ Site serves the new build (index, assets and the /video-editor route)');
@@ -243,6 +246,25 @@ async function checkUrl(url, test = () => true, why = 'unexpected content', atte
   }
   console.log(`  ✖ ${url} – ${last}`);
   return { ok: false, blocked };
+}
+/**
+ * Says whether this host can convert unsupported codecs itself (public/api/convert.php + ffmpeg).
+ * Purely informational: without it the editor converts in the browser, which is slower but works.
+ */
+async function reportConvertApi(url) {
+  try {
+    const res = await fetch(url, { headers: BROWSER_HEADERS, redirect: 'follow', signal: AbortSignal.timeout(20_000) });
+    const type = res.headers.get('content-type') || '';
+    if (res.status !== 200 || !/application\/json/i.test(type)) {
+      console.log(`  ℹ server-side conversion: not active (${res.status !== 200 ? `HTTP ${res.status}` : 'the host did not run the PHP script'}) – conversions will run in the browser`);
+      return;
+    }
+    const h = await res.json();
+    if (h.ok) console.log(`  ✔ server-side conversion: ffmpeg ${h.ffmpeg} (${h.video}${h.audio ? ' + ' + h.audio : ', no audio encoder'}), up to ${fmtBytes(h.maxBytes)} per file`);
+    else console.log(`  ℹ server-side conversion: unavailable (${h.reason}) – conversions will run in the browser. Upload a static ffmpeg to public_html/api/bin/ffmpeg to enable it.`);
+  } catch (e) {
+    console.log(`  ℹ server-side conversion: could not be checked (${e?.message || e}) – conversions will run in the browser`);
+  }
 }
 // SNI needs a host name; an IP address is not allowed as servername
 function tlsOptions() { return { rejectUnauthorized: !cfg.insecureTls, ...(isIP(cfg.host) ? {} : { servername: cfg.host }) }; }
