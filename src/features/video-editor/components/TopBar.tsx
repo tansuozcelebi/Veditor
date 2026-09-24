@@ -5,7 +5,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { useEditor, useI18n, useStoreEvents } from '../hooks/useEditor';
 import type { Lang } from '../engine/i18n';
 
-export function TopBar({ onExport, onSave, onOpen, embedded }: { onExport: () => void; onSave: () => void; onOpen: () => void; embedded?: boolean }) {
+export function TopBar({ onExport, onSave, onOpen, layout, embedded }: { onExport: () => void; onSave: () => void; onOpen: () => void; layout?: React.ReactNode; embedded?: boolean }) {
   const { store } = useEditor();
   const { t, lang, setLang } = useI18n();
   useStoreEvents(['change']);
@@ -27,6 +27,7 @@ export function TopBar({ onExport, onSave, onOpen, embedded }: { onExport: () =>
       <div className="ml-auto flex items-center gap-2">
         <Button id="btnOpenProject" variant="ghost" size="sm" onClick={onOpen}><FolderOpen /> {t('project.open')}</Button>
         <Button id="btnSaveProject" variant="ghost" size="sm" onClick={onSave}><Save /> {t('project.save')}</Button>
+        {layout}
         <div className="w-20"><NativeSelect id="langSelect" size="sm" value={lang} onChange={(e) => setLang(e.target.value as Lang)} aria-label="Language">
           <NativeSelectOption value="tr">TR</NativeSelectOption><NativeSelectOption value="en">EN</NativeSelectOption>
         </NativeSelect></div>

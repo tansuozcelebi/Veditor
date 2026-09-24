@@ -31,6 +31,8 @@ kopyalanıp takılabilir. Ayrıntılar için [Başka bir uygulamaya entegrasyon]
 | **Geçiş efektleri** | Klip başına giriş/çıkış geçişi: çapraz erime, sola/sağa/yukarı/aşağı kaydırma, yakınlaşma, sola/sağa silme, bulanıklık. Bitişik önceki klip varsa iki klip harmanlanır (önceki klip uzatılır, sesler çapraz geçer); yoksa klip alttaki katmandan belirir. |
 | **Yazı katmanı** | Video kanallarına yazı klipleri (**T** tuşu veya "Yazı Ekle"): çok satırlı metin, yazı tipi, boyut, renk, kalın/italik, hizalama, arka plan kutusu, kontur, gölge, satır aralığı; konum/ölçek/opaklık ve geçişler tüm kliplerde olduğu gibi çalışır. |
 | **Dışa aktarma** | WebM (VP9/VP8 + Opus) ya da tarayıcı destekliyorsa MP4 (H.264 + AAC); yalnızca ses (Opus / AAC). Çözünürlük (1080p, 720p, 4K, dikey, kare, özel), kare hızı, bit hızı, ilerleme çubuğu, önizleme ve indirme. WebM çıktısına süre bilgisi otomatik eklenir. |
+| **Dockable paneller** | Medya, Önizleme, Özellikler, Kaynak Oynatıcı ve Zaman Çizelgesi birer panel: sekmesinden tutup başka bir kenara sürüklenebilir, üst üste sekme hâline getirilebilir, kenarlarından boyutlandırılabilir, kapatılıp **Yerleşim** menüsünden geri açılabilir. Düzen tarayıcıda saklanır, menü geçişlerinde ve yeniden açılışta korunur; tek tıkla varsayılana dönülür. |
+| **Kaynak oynatıcı** | Ayarların altındaki ikinci oynatıcı: seçilen, içe aktarılan ya da üzerine sürükleyip bıraktığınız klibi tek başına, kendi kontrolleriyle oynatır ve **Ekle** ile oynatma kafasına yerleştirir. Zaman çizelgesi oynarken sesler çakışmaz; hangisi başlarsa diğeri durur. |
 | **Proje** | Proje ayarları (çözünürlük, FPS, arka plan), proje dosyasını JSON olarak kaydetme / açma (medya dosyaları yeniden eşleştirilir), TR / EN arayüz. |
 
 ## Çalıştırma
@@ -52,10 +54,25 @@ MediaRecorder desteği kısıtlıdır. Node 20+ gerekir.
 2. Medya kartındaki **＋** ile oynatma kafasına ekleyin, çift tıklayın ya da doğrudan istediğiniz kanala sürükleyin.
    Ses dosyaları otomatik olarak ses kanalına gider; video bir ses kanalına bırakılırsa yalnızca sesi kullanılır.
 3. Klipleri sürükleyin, uçlarından kırpın, **S** ile bölün. Sağ tık menüsünde tüm işlemler vardır.
-4. Bir klibi seçince sağdaki **Özellikler** panelinde ses, fade, opaklık, ölçek, konum, geçişler ve yazı ayarları görünür.
+4. Bir klibi seçince **Özellikler** panelinde ses, fade, opaklık, ölçek, konum, geçişler ve yazı ayarları görünür.
+   Seçtiğiniz medya aynı anda soldaki **Kaynak Oynatıcı**'da açılır; oradan izleyip **Ekle** ile zaman çizelgesine koyabilirsiniz.
 5. **Ses Kaydet** ile mikrofondan seslendirme kaydedin; kayıt oynatma kafasından başlar ve durdurunca ses kanalına eklenir.
 6. **Dışa Aktar** ile biçim, çözünürlük, FPS ve kaliteyi seçip başlatın. Dışa aktarma gerçek zamanlı çalışır
    (5 dakikalık proje ≈ 5 dakika); sekmeyi ön planda tutun.
+
+### Panel yerleşimi
+
+Ekrandaki beş panelin (Medya, Önizleme, Özellikler, Kaynak Oynatıcı, Zaman Çizelgesi) hepsi **dockable**'dır:
+
+- Panelin **sekmesinden tutup sürükleyin**; bırakma sırasında hedef alan vurgulanır. Bir panelin kenarına
+  bırakırsanız yan yana/alt alta yerleşir, ortasına bırakırsanız sekme olarak o panelin üzerine eklenir.
+- Panellerin arasındaki **ayraçları sürükleyerek** boyutlandırın.
+- Sekmedeki **×** ile paneli kapatın; üst çubuktaki **Yerleşim** menüsünden işaretleyerek geri açın.
+- **Yerleşim → Varsayılan yerleşime dön** ilk açılıştaki düzeni geri getirir.
+
+Düzen tarayıcıda (`localStorage`, `veditor.layout.v1`) saklanır: menüler arasında gezinseniz de sayfayı
+kapatıp açsanız da paneller bıraktığınız yerde kalır. Varsayılan düzen: solda **Özellikler** ve altında
+**Kaynak Oynatıcı**, ortada **Önizleme**, sağda **Medya**, altta tam genişlikte **Zaman Çizelgesi**.
 
 ### Kısayollar
 
@@ -84,11 +101,14 @@ src/index.css                      Tailwind v4 + shadcn tema değişkenleri (okl
 src/app/App.tsx                    Geliştirme kabuğu: yan menü + react-router rotaları (host uygulamayı taklit eder)
 src/lib/utils.ts                   shadcn `cn()` yardımcısı
 src/components/ui/                 shadcn/ui bileşenleri (new-york): button, input, textarea, label, separator, badge,
-                                   switch, slider, select, native-select, dialog, context-menu, tooltip, scroll-area, sonner
+                                   switch, slider, select, native-select, dialog, dropdown-menu, context-menu, tooltip,
+                                   scroll-area, sonner
 src/features/video-editor/         ▶ ÖZELLİK MODÜLÜ (host uygulamaya kopyalanacak klasör)
   index.ts                         Genel API: <VideoEditor />, Store, Player, Exporter, i18n, tipler
   editor.css                       Zaman çizelgesi / klip / medya kartı stilleri (.veditor altında, shadcn değişkenlerini kullanır)
   components/VideoEditor.tsx       Ana bileşen: düzen, düzenleme komutları, kısayollar, diyaloglar
+  components/EditorDock.tsx        Dockable panel düzeni (dockview): varsayılan yerleşim, kalıcılık, Yerleşim menüsü
+  components/SourcePlayer.tsx      Kaynak oynatıcı (seçilen / sürüklenen klibi tek başına oynatır)
   components/TopBar.tsx            Proje adı, aç/kaydet, dil, dışa aktar
   components/MediaLibrary.tsx      Medya kitaplığı (içe aktarma, sürükle-bırak, kayıt)
   components/Preview.tsx           Canvas önizleme, taşıma kontrolleri, görünüm modu, monitör sesi
@@ -137,11 +157,12 @@ değişkenleri, `@/` takma adı), lucide-react ikonları, react-router. Adımlar
 
 1. **Klasörü kopyalayın:** `src/features/video-editor/` → host uygulamada aynı yola.
 2. **shadcn bileşenlerini sağlayın:** Host'ta yoksa `npx shadcn@latest add button input textarea label separator
-   badge switch slider select dialog context-menu tooltip scroll-area sonner` çalıştırın. `native-select`
+   badge switch slider select dialog dropdown-menu context-menu tooltip scroll-area sonner` çalıştırın. `native-select`
    shadcn kayıt defterinde yeni bir bileşendir; yoksa `src/components/ui/native-select.tsx` dosyasını kopyalayın.
    Modül yalnızca `@/components/ui/*` ve `@/lib/utils` yollarına bağımlıdır.
 3. **Bağımlılıklar:** `react-router-dom` hariç `package.json` içindeki `dependencies` (radix-ui, lucide-react,
-   sonner, clsx, tailwind-merge, class-variance-authority) host'ta bulunmalıdır. Host shadcn'in eski
+   sonner, clsx, tailwind-merge, class-variance-authority, panel yerleşimi için **dockview-react**, kodek
+   dönüştürme için **@ffmpeg/ffmpeg**, **@ffmpeg/util**, **@ffmpeg/core**) host'ta bulunmalıdır. Host shadcn'in eski
    `@radix-ui/react-*` paketlerini kullanıyorsa `src/components/ui` içindeki `from 'radix-ui'` içe aktarmaları
    host'un kendi bileşenleriyle değiştirilebilir; editör bileşenleri Radix'e doğrudan bağımlı değildir.
 4. **Rota ve menü:**
@@ -199,8 +220,12 @@ Test, üretim derlemesini yerel bir sunucudan (SPA yedeği ile) başsız Chromiu
 (iki VP8 video, WAV ton, PNG) üretir, içe aktarma → yerleştirme → bölme/geri alma → fare ile sürükleme/kırpma →
 oynatma/kompozit/ızgara → sesi ayırma → sahte mikrofonla seslendirme kaydı → geçişler → yazı katmanı → sağ tık
 menüsü → proje kaydet/aç → dışa aktarma akışını doğrular ve çıktıyı Playwright ile gelen ffmpeg ile kontrol eder.
-Ayrıca ayrı tarayıcı oturumlarında gerçek tıklama ile oynatma, dar bir CSP altındaki davranış ve – makinede PHP
-varsa – `dist/` klasörünü PHP ile sunarak **sunucu tarafında dönüştürme** uçtan uca sınanır (sunucu dönüştürür,
+Panel yerleşimi de gerçek fare ile sınanır: bir panel sekmesi sürüklenip başka bir panelin üzerine bırakılır,
+**Yerleşim** menüsünden panel gizlenip geri açılır, düzenin saklandığı ve varsayılana dönüldüğü doğrulanır;
+kaynak oynatıcının seçilen klibi oynattığı, üzerine bırakılan dosyayı içe aktardığı ve zaman çizelgesi ile
+aynı anda ses vermediği kontrol edilir. Ayrıca ayrı tarayıcı oturumlarında gerçek tıklama ile oynatma, dar bir
+CSP altındaki davranış ve – makinede PHP varsa – `dist/` klasörünü PHP ile sunarak **sunucu tarafında
+dönüştürme** uçtan uca sınanır (sunucu dönüştürür,
 editör sunucuyu tercih eder, sunucu reddettiğinde tarayıcıya düşülür, işler sunucuda temizlenir).
 Çıktılar `test/output/` altına yazılır.
 

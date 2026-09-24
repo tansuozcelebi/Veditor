@@ -285,8 +285,94 @@ try {
   check('fade transition ramps alpha 0→1 over its duration', approx(trans.fx0, 0.1, 0.02) && approx(trans.fx1, 0.9, 0.02) && trans.fxN === 1, `alpha=${trans.fx0},${trans.fx1},${trans.fxN}`);
   check('fading-in clip blends over the layer below', trans.early[2] > trans.late[2] + 40 && trans.late[1] > trans.early[1] + 40, `early=${trans.early.slice(0, 3)} late=${trans.late.slice(0, 3)}`);
 
-  const layout = await page.evaluate(() => ({ docW: document.documentElement.scrollWidth, vw: window.innerWidth, inspector: document.getElementById('inspectorPanel').getBoundingClientRect().right, lang: document.documentElement.lang, title: document.getElementById('inspectorTitle').textContent }));
-  check('layout fits the viewport (inspector visible, no horizontal overflow)', layout.docW <= layout.vw && layout.inspector <= layout.vw && layout.inspector > layout.vw - 320, JSON.stringify(layout));
+  // ---- dockable panels ----
+  const box = () => page.evaluate(() => {
+    const rect = (id) => { const el = document.getElementById(id); if (!el) return null; const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), right: Math.round(r.right), bottom: Math.round(r.bottom) }; };
+    const panels = {};
+    for (const id of ['libraryPanel', 'previewPanel', 'inspectorPanel', 'sourcePanel', 'timelinePanel']) panels[id] = rect(id);
+    return { docW: document.documentElement.scrollWidth, vw: window.innerWidth, vh: window.innerHeight, lang: document.documentElement.lang, title: document.getElementById('inspectorTitle').textContent, panels, tabs: [...document.querySelectorAll('.dv-tab')].map((t) => t.textContent.trim()) };
+  });
+  const layout = await box();
+  const p = layout.panels;
+  check('layout fits the viewport (every panel visible, no horizontal overflow)',
+    layout.docW <= layout.vw && Object.values(p).every((b) => b && b.w > 60 && b.h > 60 && b.right <= layout.vw + 1 && b.bottom <= layout.vh + 1),
+    JSON.stringify({ docW: layout.docW, vw: layout.vw, panels: p }));
+  check('the default arrangement: settings top-left, the source player under it, the timeline across the bottom',
+    layout.tabs.length === 5 && p.inspectorPanel.x < p.previewPanel.x && p.sourcePanel.x === p.inspectorPanel.x && p.sourcePanel.y >= p.inspectorPanel.bottom - 40
+      && p.timelinePanel.y >= p.previewPanel.bottom - 40 && p.timelinePanel.w > layout.vw * 0.9 && p.libraryPanel.x > p.previewPanel.x,
+    JSON.stringify({ tabs: layout.tabs, inspector: p.inspectorPanel, source: p.sourcePanel, timeline: p.timelinePanel }));
+
+  // ---- source player: shows what is selected or dropped, and never plays over the timeline ----
+  const clipAId = await page.evaluate(() => [...window.veditor.store.media.values()].find((m) => m.name === 'clipA.webm').id);
+  await page.click(`.media-card[data-id="${clipAId}"]`);
+  const sourcePlay = await page.evaluate(async () => {
+    const v = document.getElementById('sourceVideo');
+    if (!v) return { shown: false };
+    await window.veditor.player.play();           // the timeline monitor is running…
+    const timelineWas = window.veditor.player.playing;
+    await v.play().catch(() => {});               // …and must stand down when the source plays
+    await new Promise((r) => setTimeout(r, 800));
+    const out = { shown: true, blob: v.currentSrc.startsWith('blob:'), t: v.currentTime, name: document.querySelector('#sourcePanel h2').textContent, timelineWas, timelineNow: window.veditor.player.playing };
+    v.pause();
+    return out;
+  });
+  check('the source player plays the selected clip and stops the timeline monitor',
+    sourcePlay.shown && sourcePlay.blob && sourcePlay.t > 0.2 && sourcePlay.name === 'clipA.webm' && sourcePlay.timelineWas === true && sourcePlay.timelineNow === false,
+    JSON.stringify(sourcePlay));
+
+  const droppedOnSource = await page.evaluate(async (bytes) => {
+    const stage = document.getElementById('sourceStage');
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(bytes)], 'dropped-clip.webm', { type: 'video/webm' }));
+    stage.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    stage.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    const shown = () => document.querySelector('#sourcePanel h2').textContent === 'dropped-clip.webm' && !!document.getElementById('sourceVideo')?.getAttribute('src')?.startsWith('blob:');
+    for (let i = 0; i < 100 && !shown(); i++) await new Promise((r) => setTimeout(r, 100));
+    return { name: document.querySelector('#sourcePanel h2').textContent, inLibrary: [...window.veditor.store.media.values()].some((m) => m.name === 'dropped-clip.webm'), src: !!document.getElementById('sourceVideo')?.getAttribute('src')?.startsWith('blob:') };
+  }, [...readFileSync(join(fixtures, 'clipB.webm'))]);
+  check('a file dropped on the source player is imported and shown there', droppedOnSource.name === 'dropped-clip.webm' && droppedOnSource.inLibrary && droppedOnSource.src === true, JSON.stringify(droppedOnSource));
+  await page.evaluate(() => { const { store } = window.veditor; const m = [...store.media.values()].find((x) => x.name === 'dropped-clip.webm'); if (m) store.removeMedia(m.id); });
+
+  // ---- panels can be hidden, brought back, rearranged and reset ----
+  await page.click('#btnLayout');
+  await page.click('#layoutMenu [data-panel="source"]');
+  await page.waitForTimeout(250);
+  const hidden = await page.evaluate(() => !!document.getElementById('sourcePanel'));
+  await page.click('#layoutMenu [data-panel="source"]');
+  await page.waitForTimeout(250);
+  const restored = await page.evaluate(() => !!document.getElementById('sourcePanel'));
+  await page.keyboard.press('Escape');
+  check('the layout menu hides a panel and brings it back', hidden === false && restored === true, JSON.stringify({ hidden, restored }));
+
+  // a real mouse drag of a tab, the way a user rearranges the workspace
+  const sourceTitle = await page.evaluate(() => window.veditor.dock.api.getPanel('source').title);
+  const groupsBefore = await page.evaluate(() => window.veditor.dock.api.groups.length);
+  const tabBox = await page.locator('.dv-tab').filter({ hasText: sourceTitle }).first().boundingBox();
+  const previewBox = await page.locator('#previewPanel').boundingBox();
+  await page.mouse.move(tabBox.x + tabBox.width / 2, tabBox.y + tabBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(previewBox.x + previewBox.width / 2, previewBox.y + previewBox.height / 2, { steps: 20 });
+  await page.mouse.move(previewBox.x + previewBox.width / 2 + 4, previewBox.y + previewBox.height / 2, { steps: 4 });
+  await page.waitForTimeout(300);
+  const dropTarget = await page.evaluate(() => !!document.querySelector('.dv-drop-target-anchor, .dv-drop-target'));
+  await page.mouse.up();
+  await page.waitForTimeout(800);
+  const dragged = await page.evaluate(() => ({
+    groups: window.veditor.dock.api.groups.length,
+    group: window.veditor.dock.api.getPanel('source').group.panels.map((x) => x.id),
+    saved: (localStorage.getItem('veditor.layout.v1') || '').includes('"source"'),
+  }));
+  check('a panel tab can be dragged onto another panel with the mouse, and the arrangement is stored',
+    dropTarget && dragged.groups === groupsBefore - 1 && dragged.group.includes('source') && dragged.group.includes('preview') && dragged.saved,
+    JSON.stringify({ dropTarget, groupsBefore, ...dragged }));
+
+  await page.evaluate(() => window.veditor.dock.reset());
+  await page.waitForTimeout(600);
+  const afterReset = await box();
+  check('the default arrangement can be restored, with its original proportions',
+    afterReset.panels.libraryPanel.x > afterReset.panels.previewPanel.x && afterReset.panels.sourcePanel.x === afterReset.panels.inspectorPanel.x && afterReset.tabs.length === 5
+      && approx(afterReset.panels.inspectorPanel.w, p.inspectorPanel.w, 2) && approx(afterReset.panels.libraryPanel.w, p.libraryPanel.w, 2) && approx(afterReset.panels.sourcePanel.h, p.sourcePanel.h, 2),
+    JSON.stringify(afterReset.panels));
   check('Turkish locale picks Turkish UI', layout.lang === 'tr' && /Özellikler|Klip|Kanal|Proje/.test(layout.title), layout.title);
   await page.screenshot({ path: join(outDir, 'editor.png') });
 
@@ -387,10 +473,19 @@ try {
     await p2.click('#btnPlay'); // pause
     const paused = await readPlay();
     check('real click on Play again pauses', !paused.playing && paused.actives === 0 && /play/.test(paused.btn), JSON.stringify(paused));
+    // a rearranged workspace must still be there after a trip through the host app's menu
+    await p2.evaluate(() => { const { api } = window.veditor.dock; api.getPanel('inspector').api.moveTo({ group: api.getPanel('library').group, position: 'center' }); });
+    await p2.waitForTimeout(700);
+    const stacked = await p2.evaluate(() => window.veditor.dock.api.getPanel('inspector').group.panels.map((x) => x.id));
     await p2.click('nav a[href="/dashboard"]');
     await p2.waitForFunction(() => !document.getElementById('previewPanel'));
     await p2.click('nav a[href="/video-editor"]');
     await p2.waitForFunction(() => window.veditor && window.veditor.tl && document.querySelectorAll('.clip').length === 1);
+    await p2.waitForTimeout(500);
+    const stackedAfter = await p2.evaluate(() => window.veditor.dock.api.getPanel('inspector').group.panels.map((x) => x.id));
+    check('the panel arrangement survives a trip through the menu', stacked.length === 2 && stackedAfter.join() === stacked.join(), JSON.stringify({ stacked, stackedAfter }));
+    await p2.evaluate(() => window.veditor.dock.reset());
+    await p2.waitForTimeout(500);
     await p2.click('#btnPlay');
     await p2.waitForTimeout(1500);
     const r2 = await readPlay();

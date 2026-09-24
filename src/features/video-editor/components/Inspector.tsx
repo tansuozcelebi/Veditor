@@ -32,7 +32,7 @@ export function Inspector({ actions }: { actions: InspectorActions }) {
   const track = store.selection.trackId ? store.getTrack(store.selection.trackId) : null;
   const title = clips.length ? t('inspector.clip') : track ? t('inspector.track') : t('inspector.project');
   return (
-    <aside className="bg-card flex min-h-0 min-w-0 flex-col border-l" id="inspectorPanel">
+    <aside className="bg-card flex min-h-0 min-w-0 flex-col" id="inspectorPanel">
       <div className="border-b px-3 py-2"><h2 className="text-sm font-semibold" id="inspectorTitle">{title}</h2></div>
       <div className="flex flex-1 flex-col gap-3 overflow-auto p-3" id="inspectorBody">
         {clips.length === 1 && <ClipInspector clip={clips[0]} actions={actions} />}
