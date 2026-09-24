@@ -119,12 +119,56 @@ function firstEncoder(array $wanted): ?string {
 function formats(): array {
     static $map = null;
     if ($map !== null) return $map;
-    $webmVideo = firstEncoder(['libvpx', 'libvpx-vp9', 'vp8', 'vp9', 'libsvtav1', 'libaom-av1', 'librav1e']);
-    $mp4Video = firstEncoder(['libx264', 'libopenh264', 'h264_nvenc', 'h264_qsv', 'h264_vaapi', 'h264_v4l2m2m', 'libx265', 'hevc_nvenc']);
+    $candidates = [
+        'webm' => [
+            'video' => ['libvpx', 'libvpx-vp9', 'vp8', 'vp9', 'libsvtav1', 'libaom-av1', 'librav1e'],
+            'audio' => ['libvorbis', 'libopus', 'vorbis', 'opus'],
+        ],
+        'mp4' => [
+            // software first: a listed hardware encoder usually has no device behind it on shared hosting
+            'video' => ['libx264', 'libopenh264', 'libx265', 'h264_nvenc', 'h264_qsv', 'h264_vaapi', 'h264_v4l2m2m', 'hevc_nvenc'],
+            'audio' => ['aac', 'libfdk_aac', 'libmp3lame', 'mp3'],
+        ],
+    ];
     $map = [];
-    if ($webmVideo) $map['webm'] = ['video' => $webmVideo, 'audio' => firstEncoder(['libvorbis', 'libopus', 'vorbis', 'opus'])];
-    if ($mp4Video) $map['mp4'] = ['video' => $mp4Video, 'audio' => firstEncoder(['aac', 'libfdk_aac', 'libmp3lame', 'mp3'])];
+    foreach ($candidates as $format => $wanted) {
+        foreach ($wanted['video'] as $video) {
+            if (!in_array($video, encoders(), true)) continue;
+            // Being listed is not the same as working: h264_v4l2m2m, h264_vaapi and friends are compiled
+            // in but fail without their device. Ask this ffmpeg to encode a fraction of a second and see.
+            $audio = firstEncoder($wanted['audio']);
+            if ($audio !== null && encodes($format, $video, $audio)) { $map[$format] = ['video' => $video, 'audio' => $audio]; break; }
+            if (encodes($format, $video, null)) { $map[$format] = ['video' => $video, 'audio' => null]; break; }
+        }
+    }
     return $map;
+}
+
+/**
+ * Encodes a fraction of a second of black video (and silence) to prove the encoder really runs here.
+ * The answer is cached in the work directory, because it costs an ffmpeg start-up per combination.
+ */
+function encodes(string $format, string $video, ?string $audio): bool {
+    $ffmpeg = ffmpegPath();
+    if (!$ffmpeg || !canRunProcesses()) return false;
+    $cache = workRoot() . '/probe-' . substr(sha1($ffmpeg . '|' . $format . '|' . $video . '|' . (string) $audio), 0, 16);
+    if (is_file($cache) && time() - (int) @filemtime($cache) < 86400) return trim((string) @file_get_contents($cache)) === 'ok';
+    $out = workRoot() . '/probe-' . bin2hex(random_bytes(6)) . '.' . $format;
+    $cmd = escapeshellarg($ffmpeg) . ' -hide_banner -nostdin -y -timelimit 10'
+        . ' -f lavfi -i ' . escapeshellarg('color=c=black:s=64x64:r=10:d=0.3')
+        . ' -f lavfi -i ' . escapeshellarg('anullsrc=r=44100:cl=mono')
+        . ' -map 0:v -c:v ' . escapeshellarg($video) . ' -pix_fmt yuv420p'
+        . ($audio !== null ? ' -map 1:a -c:a ' . escapeshellarg($audio) . ' -strict -2' : ' -an')
+        . ' -t 0.3 ' . escapeshellarg($out) . ' 2>&1';
+    $log = (string) @shell_exec($cmd);
+    $made = is_file($out) && filesize($out) > 0;
+    @unlink($out);
+    // A build stripped down to the codecs it needs (Playwright ships one) has no lavfi and cannot
+    // generate the test clip at all. That says nothing about the encoder, so the list is trusted.
+    $inconclusive = !$made && preg_match('/Unknown input format|Unrecognized option|No such filter|Error opening input|Option not found/i', $log);
+    $ok = $made || (bool) $inconclusive;
+    @file_put_contents($cache, $ok ? 'ok' : 'no');
+    return $ok;
 }
 
 const MIME = ['webm' => 'video/webm', 'mp4' => 'video/mp4'];
