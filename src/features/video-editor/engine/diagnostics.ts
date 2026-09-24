@@ -3,7 +3,7 @@
 // evidence (what the file is, what the decoder said, whether the page's policy allowed it at all)
 // only exists at that moment. These helpers write it to the console in a readable form.
 import { cspViolations, isLocalMediaBlock } from './csp';
-import { probeServer } from './serverTranscode';
+import { chooseFormat, probeServer } from './serverTranscode';
 
 const PREFIX = 'color:#e11d48;font-weight:bold';
 
@@ -47,7 +47,7 @@ export interface Diagnostics {
   webAssembly: boolean;
   codecCore: 'reachable' | 'unreachable';
   /** Whether this deployment can convert unsupported codecs on the host instead of in the tab. */
-  serverConvert: { available: boolean; ffmpeg: string | null; reason: string | null; maxBytes: number | null };
+  serverConvert: { available: boolean; ffmpeg: string | null; reason: string | null; maxBytes: number | null; format: string | null; formats: string[] };
   cspViolations: readonly { directive: string; blockedURI: string }[];
 }
 
@@ -103,7 +103,14 @@ export async function diagnostics(coreUrl?: string): Promise<Diagnostics> {
     mediaRecorder,
     webAssembly: typeof WebAssembly === 'object',
     codecCore,
-    serverConvert: { available: !!health?.ok, ffmpeg: health?.ffmpeg ?? null, reason: health ? health.reason : 'no conversion service on this host', maxBytes: health?.maxBytes ?? null },
+    serverConvert: {
+      available: !!health?.ok && chooseFormat(health) !== null,
+      ffmpeg: health?.ffmpeg ?? null,
+      reason: !health ? 'no conversion service on this host' : health.reason ?? (chooseFormat(health) ? null : 'the host writes no format this browser can play'),
+      maxBytes: health?.maxBytes ?? null,
+      format: chooseFormat(health),
+      formats: Object.keys(health?.formats ?? {}),
+    },
     cspViolations: cspViolations(),
   };
 }
@@ -116,7 +123,9 @@ export async function logDiagnostics(coreUrl?: string): Promise<Diagnostics> {
   console.table(d.canPlay);
   console.log('blob: playback', d.blobMedia, '| WebAssembly', d.webAssembly, '| codec core', d.codecCore);
   console.log('MediaRecorder formats', d.mediaRecorder);
-  console.log('server conversion', d.serverConvert.available ? `available (ffmpeg ${d.serverConvert.ffmpeg}, up to ${Math.floor((d.serverConvert.maxBytes || 0) / 1024 / 1024)} MB)` : `unavailable (${d.serverConvert.reason}) – conversions run in this tab`);
+  console.log('server conversion', d.serverConvert.available
+    ? `available (ffmpeg ${d.serverConvert.ffmpeg}, → ${d.serverConvert.format}, up to ${Math.floor((d.serverConvert.maxBytes || 0) / 1024 / 1024)} MB)`
+    : `unavailable (${d.serverConvert.reason}) – conversions run in this tab`);
   if (d.cspViolations.length) console.warn('Content-Security-Policy violations so far', d.cspViolations);
   if (d.blobMedia === 'blocked-by-policy') {
     console.error("[veditor] This page's Content-Security-Policy blocks blob: URLs, so no local file can be opened. " +

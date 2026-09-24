@@ -9,16 +9,36 @@ import type { TranscodeProgress } from './transcode';
 /** Same origin as the app: the API ships in public/api and is deployed with the build. */
 export const SERVER_API_URL = `${import.meta.env.BASE_URL}api/convert.php`;
 
+/** Containers a browser can be asked to play, best first: VP8/VP9 WebM works even without proprietary codecs. */
+export const FORMATS = ['webm', 'mp4'] as const;
+export type ServerFormat = (typeof FORMATS)[number];
+
 export interface ServerHealth {
   ok: boolean;
   ffmpeg: string | null;
-  /** Why the host cannot convert: ffmpeg-missing | processes-disabled | workdir-not-writable | ffmpeg-not-runnable */
+  /** Why the host cannot convert: ffmpeg-missing | processes-disabled | workdir-not-writable | ffmpeg-not-runnable | no-encoder */
   reason: string | null;
-  video: string | null;
-  audio: string | null;
+  /** What this host can write, per container – a build without libvpx offers mp4 only, or nothing. */
+  formats: Partial<Record<ServerFormat, { video: string; audio: string | null }>>;
   maxBytes: number;
   maxJobs: number;
   tokenRequired: boolean;
+}
+
+const MIME: Record<ServerFormat, string> = { webm: 'video/webm', mp4: 'video/mp4' };
+
+/** Containers this browser can decode – there is no point converting into one it cannot play. */
+export function playableFormats(): ServerFormat[] {
+  const v = document.createElement('video');
+  return FORMATS.filter((f) => (f === 'webm'
+    ? v.canPlayType('video/webm; codecs="vp8"') || v.canPlayType('video/webm; codecs="vp9"')
+    : v.canPlayType('video/mp4; codecs="avc1.42E01E"')));
+}
+
+/** The container to ask this host for: the first one both sides support, or null when there is none. */
+export function chooseFormat(health: ServerHealth | null): ServerFormat | null {
+  if (!health?.ok) return null;
+  return playableFormats().find((f) => health.formats?.[f]) ?? null;
 }
 
 export type ServerFailReason = 'unreachable' | 'unavailable' | 'too-large' | 'busy' | 'unsupported' | 'unauthorised' | 'failed' | 'aborted';
@@ -66,10 +86,10 @@ export function resetServerProbe() { probe = null; }
 /** True when this file should go to the server rather than to the in-browser converter. */
 export async function canConvertOnServer(file: File): Promise<boolean> {
   const health = await probeServer();
-  return !!health?.ok && file.size <= health.maxBytes;
+  return !!health?.ok && file.size <= health.maxBytes && chooseFormat(health) !== null;
 }
 
-interface StartResponse { ok: boolean; job?: string; error?: string; reason?: string; maxBytes?: number }
+interface StartResponse { ok: boolean; job?: string; format?: ServerFormat; error?: string; reason?: string; maxBytes?: number }
 interface StatusResponse { ok: boolean; state: 'running' | 'done' | 'error' | 'cancelled'; progress: number; error?: string; log?: string[] }
 
 function reasonOf(status: number, body: StartResponse | null): ServerFailReason {
@@ -77,7 +97,7 @@ function reasonOf(status: number, body: StartResponse | null): ServerFailReason 
     case 'too-large': return 'too-large';
     case 'busy': return 'busy';
     case 'unsupported': return 'unsupported';
-    case 'ffmpeg-missing': case 'no-encoder': return 'unavailable';
+    case 'ffmpeg-missing': case 'no-encoder': case 'processes-disabled': return 'unavailable';
   }
   if (status === 401) return 'unauthorised';
   if (status === 413) return 'too-large';
@@ -88,8 +108,8 @@ function reasonOf(status: number, body: StartResponse | null): ServerFailReason 
 }
 
 /** POSTs the file with upload progress – fetch() cannot report that, XHR can. */
-function upload(file: File, onProgress: (ratio: number) => void, signal?: AbortSignal): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
+function upload(file: File, formats: ServerFormat[], onProgress: (ratio: number) => void, signal?: AbortSignal): Promise<{ job: string; format: ServerFormat }> {
+  return new Promise<{ job: string; format: ServerFormat }>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const abort = () => xhr.abort();
     xhr.open('POST', `${SERVER_API_URL}?action=start`);
@@ -101,12 +121,14 @@ function upload(file: File, onProgress: (ratio: number) => void, signal?: AbortS
       signal?.removeEventListener('abort', abort);
       let body: StartResponse | null = null;
       try { body = JSON.parse(xhr.responseText) as StartResponse; } catch { /* not our API */ }
-      if (xhr.status === 200 && body?.ok && body.job) { resolve(body.job); return; }
+      // the server answers with the container it chose out of the list we sent
+      if (xhr.status === 200 && body?.ok && body.job) { resolve({ job: body.job, format: body.format && FORMATS.includes(body.format) ? body.format : formats[0] }); return; }
       if (!body) { reject(new ServerConvertError('unreachable', `the conversion service answered with ${xhr.status}`)); return; }
       reject(new ServerConvertError(reasonOf(xhr.status, body), body.error || `conversion refused (${xhr.status})`));
     };
     signal?.addEventListener('abort', abort, { once: true });
     const form = new FormData();
+    form.append('formats', formats.join(',')); // fields before the file, so the server sees them first
     form.append('file', file, file.name);
     xhr.send(form);
   });
@@ -123,7 +145,7 @@ const wait = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, r
 });
 
 /** Downloads the finished file, reporting progress when the server declares its size. */
-async function download(job: string, name: string, signal?: AbortSignal, onProgress?: (ratio: number) => void): Promise<File> {
+async function download(job: string, name: string, format: ServerFormat, signal?: AbortSignal, onProgress?: (ratio: number) => void): Promise<File> {
   const res = await fetch(`${SERVER_API_URL}?action=result&job=${encodeURIComponent(job)}`, { headers: authHeaders(), signal });
   if (!res.ok) throw new ServerConvertError('failed', `the converted file could not be downloaded (${res.status})`);
   const total = Number(res.headers.get('content-length') || 0);
@@ -139,12 +161,12 @@ async function download(job: string, name: string, signal?: AbortSignal, onProgr
       got += value.length;
       onProgress?.(Math.min(1, got / total));
     }
-    blob = new Blob(chunks as BlobPart[], { type: 'video/webm' });
+    blob = new Blob(chunks as BlobPart[], { type: MIME[format] });
   } else {
     blob = await res.blob();
   }
   if (!blob.size) throw new ServerConvertError('failed', 'the server returned an empty file');
-  return new File([blob], name.replace(/\.[^.]+$/, '') + '.webm', { type: 'video/webm' });
+  return new File([blob], name.replace(/\.[^.]+$/, '') + '.' + format, { type: MIME[format] });
 }
 
 /**
@@ -156,11 +178,14 @@ export async function transcodeOnServer(file: File, { onProgress, signal }: { on
   if (!health) throw new ServerConvertError('unreachable', 'no conversion service on this host');
   if (!health.ok) throw new ServerConvertError('unavailable', health.reason || 'the host cannot convert');
   if (file.size > health.maxBytes) throw new ServerConvertError('too-large', `the host accepts at most ${Math.floor(health.maxBytes / 1024 / 1024)} MB`);
+  // Never spend an upload on a host whose output this browser could not play anyway.
+  const wanted = playableFormats().filter((f) => health.formats?.[f]);
+  if (!wanted.length) throw new ServerConvertError('unavailable', `the host writes ${Object.keys(health.formats || {}).join(', ') || 'nothing'}, which this browser cannot play`);
   if (signal?.aborted) throw new ServerConvertError('aborted', 'cancelled');
 
   const report = (stage: TranscodeProgress['stage'], ratio: number) => onProgress?.({ ratio: Math.max(0, Math.min(1, ratio)), stage, where: 'server' });
   report('uploading', 0);
-  const job = await upload(file, (r) => report('uploading', r), signal);
+  const { job, format } = await upload(file, wanted, (r) => report('uploading', r), signal);
   let cancelled = false;
   const onAbort = () => { cancelled = true; void cancelJob(job); };
   signal?.addEventListener('abort', onAbort, { once: true });
@@ -185,7 +210,7 @@ export async function transcodeOnServer(file: File, { onProgress, signal }: { on
       report('converting', status.progress || 0);
     }
     report('downloading', 0);
-    const out = await download(job, file.name, signal, (r) => report('downloading', r));
+    const out = await download(job, file.name, format, signal, (r) => report('downloading', r));
     report('downloading', 1);
     return out;
   } finally {

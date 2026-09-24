@@ -8,7 +8,7 @@
  *
  * Endpoints (all relative to this file):
  *   GET  ?action=health              → what this host can do
- *   POST ?action=start   (file=…)    → queue a conversion, returns {job}
+ *   POST ?action=start (file=…, formats=webm,mp4) → queue a conversion, returns {job, format}
  *   GET  ?action=status&job=…        → {state, progress, error}
  *   GET  ?action=result&job=…        → the converted file (WebM)
  *   POST ?action=cancel&job=…        → stop and clean up
@@ -111,6 +111,39 @@ function firstEncoder(array $wanted): ?string {
     return null;
 }
 
+/**
+ * What this host can actually write, per container. Builds differ wildly: a shared host often has an
+ * ffmpeg without libvpx (no WebM video at all) but with x264, so offering only WebM would mean
+ * accepting an upload and then refusing it. The browser picks from this list what it can play.
+ */
+function formats(): array {
+    static $map = null;
+    if ($map !== null) return $map;
+    $webmVideo = firstEncoder(['libvpx', 'libvpx-vp9', 'vp8', 'vp9', 'libsvtav1', 'libaom-av1', 'librav1e']);
+    $mp4Video = firstEncoder(['libx264', 'libopenh264', 'h264_nvenc', 'h264_qsv', 'h264_vaapi', 'h264_v4l2m2m', 'libx265', 'hevc_nvenc']);
+    $map = [];
+    if ($webmVideo) $map['webm'] = ['video' => $webmVideo, 'audio' => firstEncoder(['libvorbis', 'libopus', 'vorbis', 'opus'])];
+    if ($mp4Video) $map['mp4'] = ['video' => $mp4Video, 'audio' => firstEncoder(['aac', 'libfdk_aac', 'libmp3lame', 'mp3'])];
+    return $map;
+}
+
+const MIME = ['webm' => 'video/webm', 'mp4' => 'video/mp4'];
+
+/** ffmpeg arguments for one container, as an already-escaped string. */
+function encodeArgs(string $format, array $codecs): string {
+    $native = in_array($codecs['audio'], ['vorbis', 'opus', 'aac'], true); // built-in encoders may be flagged experimental
+    $audio = $codecs['audio']
+        ? '-map 0:a:0? -c:a ' . escapeshellarg($codecs['audio']) . ' -b:a 128k' . ($native ? ' -strict -2' : '')
+        : '-an';
+    $video = '-c:v ' . escapeshellarg($codecs['video']) . ' -b:v 2M';
+    // only libx264/libx265 understand -preset; hardware and hand-written encoders reject it
+    if (preg_match('/^libx26[45]$/', $codecs['video'])) $video .= ' -preset veryfast -crf 26';
+    elseif (preg_match('/^libvpx/', $codecs['video'])) $video .= ' -crf 30 -deadline realtime -cpu-used 8';
+    $container = $format === 'mp4' ? ' -movflags +faststart' : '';
+    return '-map 0:v:0? ' . $audio . ' ' . $video
+        . ' -vf ' . escapeshellarg("scale='min(1920,iw)':-2,format=yuv420p") . ' -pix_fmt yuv420p' . $container;
+}
+
 function canRunProcesses(): bool {
     $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
     return !in_array('proc_open', $disabled, true) && !in_array('shell_exec', $disabled, true) && function_exists('proc_open');
@@ -132,8 +165,7 @@ function sweep(): void {
     $ttl = max(60, config()['ttl_seconds']);
     foreach (glob(workRoot() . '/*', GLOB_ONLYDIR) ?: [] as $dir) {
         if (time() - (int) @filemtime($dir) < $ttl) continue;
-        foreach (glob($dir . '/*') ?: [] as $f) @unlink($f);
-        @rmdir($dir);
+        cleanJob($dir);
     }
 }
 
@@ -143,6 +175,12 @@ function runningJobs(): int {
         if (trim((string) @file_get_contents($file)) === 'running') $n++;
     }
     return $n;
+}
+
+/** Removes a job directory and everything in it. */
+function cleanJob(string $dir): void {
+    foreach (glob($dir . '/*') ?: [] as $f) @unlink($f);
+    @rmdir($dir);
 }
 
 /** Stops the encoder of a job that was cancelled, so an abandoned upload does not keep a core busy. */
@@ -182,13 +220,16 @@ if ($action === 'health') {
         $out = @shell_exec(escapeshellarg($ffmpeg) . ' -hide_banner -version 2>&1');
         if (is_string($out) && preg_match('/ffmpeg version (\S+)/', $out, $m)) $version = $m[1];
     }
-    $ok = $ffmpeg !== null && $version !== null && canRunProcesses() && is_writable(workRoot());
+    $runnable = $ffmpeg !== null && $version !== null && canRunProcesses() && is_writable(workRoot());
+    $formats = $runnable ? formats() : [];
+    // A host with ffmpeg but no usable video encoder cannot help, and saying otherwise would cost the
+    // browser a full upload before the refusal – so it does not count as available.
+    $ok = $runnable && $formats !== [];
     json([
         'ok' => $ok,
-        'ffmpeg' => $ok ? $version : null,
-        'reason' => $ok ? null : (!canRunProcesses() ? 'processes-disabled' : ($ffmpeg === null ? 'ffmpeg-missing' : (!is_writable(workRoot()) ? 'workdir-not-writable' : 'ffmpeg-not-runnable'))),
-        'video' => $ok ? firstEncoder(['libvpx', 'libvpx-vp9', 'vp8', 'vp9']) : null,
-        'audio' => $ok ? firstEncoder(['libvorbis', 'libopus', 'vorbis', 'opus']) : null,
+        'ffmpeg' => $runnable ? $version : null,
+        'reason' => $ok ? null : (!canRunProcesses() ? 'processes-disabled' : ($ffmpeg === null ? 'ffmpeg-missing' : (!is_writable(workRoot()) ? 'workdir-not-writable' : ($version === null ? 'ffmpeg-not-runnable' : 'no-encoder')))),
+        'formats' => (object) $formats,
         'maxBytes' => maxBytes(),
         'maxJobs' => config()['max_jobs'],
         'tokenRequired' => (bool) config()['token'],
@@ -222,28 +263,31 @@ if ($action === 'start') {
     @file_put_contents($dir . '/name', (string) $file['name']);
     @file_put_contents($dir . '/state', 'running');
 
-    // WebM the browser can always play: VP8/VP9 video with Vorbis or Opus audio, 8-bit 4:2:0, ≤1080p.
-    // Builds vary, so ask this ffmpeg what it has rather than assuming.
-    $vcodec = firstEncoder(['libvpx', 'libvpx-vp9', 'vp8', 'vp9']);
-    if (!$vcodec) fail('this host\'s ffmpeg cannot write WebM video', 503, ['reason' => 'no-encoder']);
-    $acodec = firstEncoder(['libvorbis', 'libopus', 'vorbis', 'opus']);
-    $audio = $acodec ? '-map 0:a:0? -c:a ' . escapeshellarg($acodec) . ' -b:a 128k' : '-an';
+    // 8-bit 4:2:0 at up to 1080p, in whichever container this host can write and the browser asked
+    // for. Builds vary, so ask this ffmpeg what it has rather than assuming.
+    $available = formats();
+    $wanted = array_values(array_filter(array_map('trim', explode(',', (string) ($_POST['formats'] ?? '')))));
+    $format = null;
+    foreach ($wanted ?: array_keys($available) as $candidate) if (isset($available[$candidate])) { $format = $candidate; break; }
+    if (!$format) {
+        cleanJob($dir);
+        fail($available === [] ? 'this host\'s ffmpeg cannot encode video' : 'this host cannot write any of the requested formats', 503, ['reason' => 'no-encoder', 'formats' => (object) $available]);
+    }
+    @file_put_contents($dir . '/ext', $format);
     $cmd = escapeshellarg($ffmpeg) . ' -hide_banner -nostdin -y'
         . ' -i ' . escapeshellarg($input)
-        . ' -map 0:v:0? ' . $audio
-        . ' -c:v ' . escapeshellarg($vcodec) . ' -b:v 2M -crf 30 -deadline realtime -cpu-used 8'
-        . ' -vf ' . escapeshellarg("scale='min(1920,iw)':-2,format=yuv420p") . ' -pix_fmt yuv420p'
+        . ' ' . encodeArgs($format, $available[$format])
         . ' -progress ' . escapeshellarg($dir . '/progress') . ' -nostats'
-        . ' ' . escapeshellarg($dir . '/output.webm');
+        . ' ' . escapeshellarg($dir . '/output.' . $format);
     // Run detached so the browser is not holding an HTTP request open for minutes. The encoder's own
     // pid is recorded first, so ?action=cancel can stop a conversion nobody is waiting for any more.
     $shell = '(' . $cmd . ' > ' . escapeshellarg($dir . '/log') . ' 2>&1 & '
         . 'echo $! > ' . escapeshellarg($dir . '/pid') . '; '
         . 'wait $!; echo $? > ' . escapeshellarg($dir . '/exit') . '; '
-        . 'if [ -s ' . escapeshellarg($dir . '/output.webm') . ' ] && [ "$(cat ' . escapeshellarg($dir . '/exit') . ')" = "0" ]; '
+        . 'if [ -s ' . escapeshellarg($dir . '/output.' . $format) . ' ] && [ "$(cat ' . escapeshellarg($dir . '/exit') . ')" = "0" ]; '
         . 'then echo done > ' . escapeshellarg($dir . '/state') . '; else echo error > ' . escapeshellarg($dir . '/state') . '; fi) > /dev/null 2>&1 &';
     @shell_exec($shell);
-    json(['ok' => true, 'job' => $id]);
+    json(['ok' => true, 'job' => $id, 'format' => $format]);
 }
 
 if ($action === 'status') {
@@ -264,12 +308,14 @@ if ($action === 'status') {
 if ($action === 'result') {
     requireToken();
     $dir = jobDir((string) ($_GET['job'] ?? ''));
-    $file = $dir . '/output.webm';
+    $ext = trim((string) @file_get_contents($dir . '/ext'));
+    if (!isset(MIME[$ext])) $ext = 'webm';
+    $file = $dir . '/output.' . $ext;
     if (!is_file($file)) fail('result is not ready', 404, ['reason' => 'not-ready']);
     $name = pathinfo(trim((string) @file_get_contents($dir . '/name')) ?: 'video', PATHINFO_FILENAME);
-    header('Content-Type: video/webm');
+    header('Content-Type: ' . MIME[$ext]);
     header('Content-Length: ' . filesize($file));
-    header('Content-Disposition: attachment; filename="' . preg_replace('/[^\w.-]+/u', '_', $name) . '.webm"');
+    header('Content-Disposition: attachment; filename="' . preg_replace('/[^\w.-]+/u', '_', $name) . '.' . $ext . '"');
     readfile($file);
     exit;
 }
@@ -280,8 +326,7 @@ if ($action === 'cancel') {
     if (is_dir($dir)) {
         killJob($dir);
         @file_put_contents($dir . '/state', 'cancelled');
-        foreach (glob($dir . '/*') ?: [] as $f) @unlink($f);
-        @rmdir($dir);
+        cleanJob($dir);
     }
     json(['ok' => true]);
 }
