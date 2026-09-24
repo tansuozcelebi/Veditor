@@ -531,6 +531,31 @@ try {
       try { const r = await fetch(`${phpBase}/api/convert.php?action=health`); if (r.ok) health = await r.json(); } catch { /* not up yet */ }
       if (!health) await new Promise((r) => setTimeout(r, 250));
     }
+    // A host can list an encoder it cannot actually run – h264_v4l2m2m and the other hardware
+    // encoders are compiled in but have no device behind them on shared hosting. Advertising one
+    // would cost the browser a whole upload, so the endpoint has to try it first.
+    {
+      const stub = join(outDir, 'fake-ffmpeg');
+      writeFileSync(stub, ['#!/bin/sh', 'case "$*" in', '  *-version*) echo "ffmpeg version 9.0 Copyright (c) 2000-2026"; exit 0 ;;',
+        "  *-encoders*) printf 'Encoders:\\n V..... h264_v4l2m2m V4L2 mem2mem H.264 encoder\\n A..... aac           AAC (Advanced Audio Coding)\\n'; exit 0 ;;",
+        'esac', 'exit 1', ''].join('\n'), { mode: 0o755 });
+      const stubJobs = join(outDir, 'convert-jobs-stub');
+      rmSync(stubJobs, { recursive: true, force: true }); mkdirSync(stubJobs, { recursive: true });
+      const stubPort = await new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); }); });
+      const stubPhp = spawn(phpBin, ['-S', `127.0.0.1:${stubPort}`, '-t', dist, join(root, 'test/php-router.php')], {
+        env: { ...process.env, VEDITOR_FFMPEG: stub, VEDITOR_WORKDIR: stubJobs }, stdio: 'ignore',
+      });
+      let stubHealth = null;
+      for (let i = 0; i < 40 && !stubHealth; i++) {
+        try { const r = await fetch(`http://127.0.0.1:${stubPort}/api/convert.php?action=health`); if (r.ok) stubHealth = await r.json(); } catch { /* not up yet */ }
+        if (!stubHealth) await new Promise((r) => setTimeout(r, 250));
+      }
+      check('an encoder the host lists but cannot run is not advertised',
+        stubHealth?.ok === false && stubHealth.reason === 'no-encoder' && Object.keys(stubHealth.formats || {}).length === 0 && stubHealth.ffmpeg === '9.0',
+        JSON.stringify(stubHealth));
+      stubPhp.kill('SIGTERM');
+    }
+
     const b4 = await chromium.launch({ channel: 'chromium' });
     const p4 = await b4.newPage({ viewport: { width: 1400, height: 900 }, locale: 'tr-TR' });
     const errs4 = [];
@@ -560,7 +585,9 @@ try {
           && real.stages.includes('uploading:server') && real.stages.includes('converting:server'),
         JSON.stringify(real));
       await new Promise((r) => setTimeout(r, 1500)); // the client releases the job once it has the file
-      check('the server keeps no leftovers once the file has been collected', readdirSync(jobs).length === 0, readdirSync(jobs).join(', '));
+      // probe-* files are the cached encoder-capability answers, which are meant to outlive a job
+      const leftovers = readdirSync(jobs).filter((f) => !f.startsWith('probe-'));
+      check('the server keeps no leftovers once the file has been collected', leftovers.length === 0, leftovers.join(', '));
       await p4.evaluate(() => { const { store } = window.veditor; for (const m of [...store.media.values()]) store.removeMedia(m.id); window.veditor.server.resetServerProbe(); });
 
       // 2. the import path must prefer the host over ffmpeg.wasm for a file the browser cannot decode.

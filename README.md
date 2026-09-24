@@ -289,12 +289,18 @@ Uç nokta derlemeyle birlikte gider: `public/api/convert.php` → `dist/api/conv
 
 **Hangi biçime dönüştürülür**
 
-Sunucu, kendi ffmpeg'inin gerçekten yazabildiği kapsayıcıları `health` yanıtında `formats` altında bildirir:
+Sunucu, kendi ffmpeg'inin gerçekten yazabildiği kapsayıcıları `health` yanıtında `formats` altında bildirir.
+Encoder'ın listede görünmesi yetmez — `h264_v4l2m2m`, `h264_vaapi` gibi donanım encoder'ları derlemede bulunur
+ama paylaşımlı sunucuda arkalarında aygıt yoktur. Bu yüzden sunucu, aday encoder ile 0,3 saniyelik siyah bir
+test klibi üretmeyi dener ve yalnızca gerçekten çalışanı duyurur (sonuç bir gün önbelleklenir; kendi test
+klibini üretemeyen çok dar derlemelerde bu deneme sonuçsuz sayılır ve liste olduğu gibi kabul edilir).
+Duyurulan kapsayıcılar:
 `webm` (VP8/VP9 – telifli kodekler olmadan derlenmiş tarayıcılar dahil her yerde oynar) ve/veya `mp4`
 (H.264 – Chrome, Edge, Safari). Tarayıcı `canPlayType` ile kendi oynatabildiklerini belirler ve yalnızca
 **iki tarafın da desteklediği** biçimi ister. Ortak biçim yoksa dosya sunucuya **hiç yüklenmez**; doğrudan
-tarayıcıdaki dönüştürücü çalışır. (SiteGround'un sistem ffmpeg'i 9.0 sürümünde `libvpx` ve `libx264`
-içermediği için tam olarak bu durumdadır — bu yüzden aşağıdaki statik derleme gerekir.)
+tarayıcıdaki dönüştürücü çalışır. (SiteGround'un sistem ffmpeg'i 9.0 sürümünde `libvpx` ve `libx264` yok; yalnızca
+çalışmayan bir donanım encoder'ı (`h264_v4l2m2m`) listeliyor — tam olarak bu durumdadır, bu yüzden aşağıdaki
+statik derleme gerekir.)
 
 **Sunucuda açmak için**
 
