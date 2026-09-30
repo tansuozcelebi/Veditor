@@ -347,34 +347,22 @@ try {
   await page.keyboard.press('Escape');
   check('the layout menu hides a panel and brings it back', hidden === false && restored === true, JSON.stringify({ hidden, restored }));
 
-  // a real mouse drag of a tab, the way a user rearranges the workspace
+  // A real drag of a tab, the way a user rearranges the workspace. Playwright's drag support is
+  // what drives it: hand-rolled mouse moves depend on the compositor starting a native drag within
+  // a guessed delay, which a loaded CI machine does not do. What is asserted is the outcome a user
+  // would see – the two panels end up in one group – rather than the indicator drawn on the way.
   const sourceTitle = await page.evaluate(() => window.veditor.dock.api.getPanel('source').title);
   const groupsBefore = await page.evaluate(() => window.veditor.dock.api.groups.length);
-  const tabBox = await page.locator('.dv-tab').filter({ hasText: sourceTitle }).first().boundingBox();
-  const previewBox = await page.locator('#previewPanel').boundingBox();
-  const centreX = previewBox.x + previewBox.width / 2;
-  const centreY = previewBox.y + previewBox.height / 2;
-  await page.mouse.move(tabBox.x + tabBox.width / 2, tabBox.y + tabBox.height / 2);
-  await page.mouse.down();
-  // A native drag only begins once the pointer has moved past the browser's threshold, and the
-  // dragstart that follows is asynchronous: on a loaded machine a fixed pause is not enough, so
-  // every step here waits for the state it needs rather than for a number of milliseconds.
-  await page.mouse.move(tabBox.x + tabBox.width / 2 + 12, tabBox.y + tabBox.height / 2 + 6, { steps: 4 });
-  await page.waitForFunction(() => !!document.querySelector('.dv-tab--dragging, .dv-tab-ghost-drag'), null, { timeout: 5000 }).catch(() => {});
-  await page.mouse.move(centreX, centreY, { steps: 20 });
-  await page.mouse.move(centreX + 4, centreY, { steps: 4 });
-  await page.waitForFunction(() => !!document.querySelector('.dv-drop-target-anchor, .dv-drop-target'), null, { timeout: 5000 }).catch(() => {});
-  const dropTarget = await page.evaluate(() => !!document.querySelector('.dv-drop-target-anchor, .dv-drop-target'));
-  await page.mouse.up();
-  await page.waitForFunction((n) => window.veditor.dock.api.groups.length === n, groupsBefore - 1, { timeout: 10000 }).catch(() => {});
+  await page.locator('.dv-tab').filter({ hasText: sourceTitle }).first().dragTo(page.locator('#previewPanel'));
+  await page.waitForFunction((n) => window.veditor.dock.api.groups.length === n, groupsBefore - 1, { timeout: 15000 }).catch(() => {});
   const dragged = await page.evaluate(() => ({
     groups: window.veditor.dock.api.groups.length,
     group: window.veditor.dock.api.getPanel('source').group.panels.map((x) => x.id),
     saved: (localStorage.getItem('veditor.layout.v1') || '').includes('"source"'),
   }));
-  check('a panel tab can be dragged onto another panel with the mouse, and the arrangement is stored',
-    dropTarget && dragged.groups === groupsBefore - 1 && dragged.group.includes('source') && dragged.group.includes('preview') && dragged.saved,
-    JSON.stringify({ dropTarget, groupsBefore, ...dragged }));
+  check('a panel tab can be dragged onto another panel, and the arrangement is stored',
+    dragged.groups === groupsBefore - 1 && dragged.group.includes('source') && dragged.group.includes('preview') && dragged.saved,
+    JSON.stringify({ groupsBefore, ...dragged }));
 
   await page.evaluate(() => window.veditor.dock.reset());
   await page.waitForTimeout(600);
