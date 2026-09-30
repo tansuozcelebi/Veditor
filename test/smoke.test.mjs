@@ -661,6 +661,11 @@ try {
   p5.on('pageerror', (e) => errs5.push(e.message));
   const tvUrl = `${base}/player?playlist=/iptv/index.m3u&api=/iptv/api`;
   const names = () => p5.evaluate(() => [...document.querySelectorAll('.channel-row')].map((r) => r.querySelector('span').textContent));
+  // the bar owns this switch on a wide screen, the filter drawer on a narrow one – read whichever is up
+  const hideLabel = (pg = p5) => pg.evaluate(() => {
+    const sw = document.getElementById('hideUnplayable') || document.getElementById('hideUnplayableSm');
+    return sw ? sw.closest('label').textContent.trim() : null;
+  });
   try {
     await p5.goto(tvUrl);
     await p5.waitForSelector('#channelList .channel-row', { timeout: 60000 });
@@ -761,6 +766,80 @@ try {
     check('an unreachable stream is explained instead of failing silently',
       /açılamadı/.test(failure) && /(CORS|ulaşılamadı)/.test(failure) && failure.includes('Yeniden dene'), failure.slice(0, 120));
 
+    // ---- stepping through the list, and leaving out what will not play ----
+    // The click above just failed, so the bar under the player has something to remember.
+    const remembered = await p5.evaluate(() => {
+      const stage = document.getElementById('playerStage').getBoundingClientRect();
+      const bar = document.getElementById('channelBar').getBoundingClientRect();
+      return {
+        underPlayer: bar.top >= stage.bottom && document.getElementById('playerColumn').contains(document.getElementById('channelBar')),
+        pos: document.getElementById('channelPosition').textContent.trim(),
+        badge: document.getElementById('channelFailBadge')?.textContent ?? null,
+        dimmed: [...document.querySelectorAll('.channel-row[data-unplayable]')].map((r) => r.querySelector('span').textContent),
+        stored: Object.keys(JSON.parse(localStorage.getItem('veditor.iptv.failed') || '{}')),
+        count: document.getElementById('channelCount').textContent,
+      };
+    });
+    remembered.label = await hideLabel();
+    check('the bar under the player remembers a stream that would not open',
+      remembered.underPlayer && remembered.pos === '4 / 5' && remembered.badge === 'Açılmıyor'
+        && remembered.dimmed.join() === 'News 24' && remembered.label === 'Açılmayanları gizle (1)'
+        && remembered.stored.length === 1 && remembered.stored[0].includes('News24.us') && remembered.count.startsWith('5'),
+      JSON.stringify(remembered));
+
+    await p5.click('#btnNextChannel');                       // Sport Eins – unreachable as well
+    await p5.waitForSelector('#playerError', { timeout: 60000 });
+    await p5.waitForTimeout(300);
+    const movedOn = await p5.evaluate(() => ({
+      count: document.getElementById('channelCount').textContent,
+      rows: [...document.querySelectorAll('.channel-row')].map((r) => r.querySelector('span').textContent),
+      pos: document.getElementById('channelPosition').textContent.trim(),
+      title: document.getElementById('playerTitle').textContent,
+    }));
+    movedOn.label = await hideLabel();
+    check('moving on drops the channel that failed out of the list',
+      movedOn.count.startsWith('4') && !movedOn.rows.includes('News 24') && movedOn.rows.includes('Sport Eins')
+        && movedOn.title === 'Sport Eins' && movedOn.pos === '4 / 4' && movedOn.label === 'Açılmayanları gizle (2)',
+      JSON.stringify(movedOn));
+
+    await p5.click('#btnNextChannel');                       // past the end, round to the top, and plays
+    await p5.waitForFunction(() => document.getElementById('playerStatus')?.dataset.status === 'playing', null, { timeout: 30000 });
+    await p5.waitForTimeout(200);
+    const wrapped = await p5.evaluate(() => ({ pos: document.getElementById('channelPosition').textContent.trim(), title: document.getElementById('playerTitle').textContent, count: document.getElementById('channelCount').textContent }));
+    await p5.keyboard.press('ArrowRight');
+    await p5.waitForTimeout(500);
+    const right = await p5.evaluate(() => ({ pos: document.getElementById('channelPosition').textContent.trim(), title: document.getElementById('playerTitle').textContent }));
+    await p5.keyboard.press('ArrowLeft');
+    await p5.waitForTimeout(500);
+    const left = await p5.evaluate(() => ({ pos: document.getElementById('channelPosition').textContent.trim(), title: document.getElementById('playerTitle').textContent }));
+    check('previous / next wrap round the list, and the arrow keys do the same',
+      wrapped.count.startsWith('3') && wrapped.pos === '1 / 3' && wrapped.title === 'Haber 1'
+        && right.pos === '2 / 3' && right.title === 'Haber 1 yedek' && left.pos === '1 / 3' && left.title === 'Haber 1',
+      JSON.stringify({ wrapped, right, left }));
+
+    await p5.click('#btnHideChannel');
+    await p5.waitForTimeout(300);
+    const hidden = await p5.evaluate(() => ({
+      badge: document.getElementById('channelHiddenBadge')?.textContent ?? null,
+      count: document.getElementById('channelCount').textContent,                 // the playing one stays
+      stored: JSON.parse(localStorage.getItem('veditor.iptv.hidden') || '[]').length,
+    }));
+    hidden.label = await hideLabel();
+    await p5.click('#btnClearHidden');
+    await p5.waitForTimeout(300);
+    const restored = await p5.evaluate(() => ({
+      count: document.getElementById('channelCount').textContent,
+      rows: [...document.querySelectorAll('.channel-row')].map((r) => r.querySelector('span').textContent),
+      dimmed: document.querySelectorAll('.channel-row[data-unplayable]').length,
+      clear: !!document.getElementById('btnClearHidden'),
+      hasSwitch: !!document.getElementById('hideUnplayable'),      // nothing marked – nothing to switch
+    }));
+    check('a channel can be hidden by hand, and everything brought back again',
+      hidden.badge === 'Gizlendi' && hidden.count.startsWith('3') && hidden.label === 'Açılmayanları gizle (3)' && hidden.stored === 1
+        && restored.count.startsWith('5') && restored.rows.includes('News 24') && restored.rows.includes('Sport Eins')
+        && restored.dimmed === 0 && !restored.clear && !restored.hasSwitch,
+      JSON.stringify({ hidden, restored }));
+
     // ---- screen sharing: the picker is the browser's, so the capture itself is stubbed ----
     await p5.evaluate(() => {
       const canvas = document.createElement('canvas');
@@ -798,12 +877,21 @@ try {
         rows: await phone.evaluate(() => document.querySelectorAll('.channel-row').length),
         selects: await phone.evaluate(() => document.querySelectorAll('#filterBar select').length),
         searchVisible: await phone.isVisible('#channelSearch'),
+        bar: await box('channelBar'),
+        barUnderStage: await phone.evaluate(() => document.getElementById('channelBar').getBoundingClientRect().top >= document.getElementById('playerStage').getBoundingClientRect().bottom),
         overflowX: await phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
       };
       check('on a phone the channel list gets the room, with the filters folded away',
         small.selects === 0 && small.searchVisible && small.list.h > 300 && small.rows >= 5
           && small.player.y === 0 && small.panel.y >= small.player.h && small.overflowX === 0,
         JSON.stringify(small));
+      await phone.click('#btnNextChannel');
+      await phone.waitForFunction(() => document.getElementById('playerStatus')?.dataset.status === 'playing', null, { timeout: 30000 });
+      const phoneStep = await phone.evaluate(() => ({ pos: document.getElementById('channelPosition').textContent.trim(), title: document.getElementById('playerTitle').textContent }));
+      check('the channel bar sits under the picture on a phone and steps through the list',
+        small.barUnderStage && small.bar.y < small.panel.y && small.bar.h > 30 && small.bar.w === small.player.w
+          && phoneStep.pos === '1 / 5' && phoneStep.title === 'Haber 1',
+        JSON.stringify({ bar: small.bar, phoneStep }));
 
       await phone.click('#btnFilters');
       await phone.waitForSelector('#filterBar[data-open="true"] select', { timeout: 10000 });

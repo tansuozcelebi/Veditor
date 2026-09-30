@@ -1,11 +1,12 @@
 import { Search, Star, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { useI18n } from '../engine/i18n';
-import { DEFAULT_SETTINGS, type SortKey, type ViewSettings } from '../engine/prefs';
+import { DEFAULT_SETTINGS, prefs, type SortKey, type ViewSettings } from '../engine/prefs';
 import type { Facet } from '../engine/catalog';
 
 const SORTS: SortKey[] = ['name', 'name-desc', 'group', 'country', 'recent', 'playlist'];
@@ -42,6 +43,8 @@ export function FilterBar({ settings, facets, search, open, onSearch, onChange, 
   onReset: () => void;
 }) {
   const { t } = useI18n();
+  // the bar under the player owns this setting on a wide screen; here it is only for narrow ones
+  const marked = prefs.unplayableCount();
   const dirty = (['group', 'category', 'country', 'language'] as const).some((k) => settings[k])
     || settings.onlyFavorites || !settings.hideNsfw || !!search || settings.sort !== DEFAULT_SETTINGS.sort;
 
@@ -84,6 +87,17 @@ export function FilterBar({ settings, facets, search, open, onSearch, onChange, 
           <Switch id="hideNsfw" checked={settings.hideNsfw} onCheckedChange={(hideNsfw) => onChange({ hideNsfw })} />
           {t('filter.nsfw')}
         </Label>
+        {marked > 0 && (
+          <Label className="gap-1.5 text-xs min-[641px]:hidden" title={t('hide.hint')}>
+            <Switch id="hideUnplayableSm" checked={settings.hideUnplayable} onCheckedChange={(hideUnplayable) => onChange({ hideUnplayable })} />
+            {t('hide.count', { n: marked })}
+          </Label>
+        )}
+        {marked > 0 && (
+          <Button id="btnClearHiddenSm" size="xs" variant="ghost" className="min-[641px]:hidden" onClick={() => { prefs.clearUnplayable(); toast.success(t('hide.cleared')); }}>
+            {t('hide.clear')}
+          </Button>
+        )}
         {dirty && <Button id="btnClearFilters" size="xs" variant="ghost" className="ml-auto" onClick={onReset}>{t('filter.clear')}</Button>}
       </div>
       </>)}

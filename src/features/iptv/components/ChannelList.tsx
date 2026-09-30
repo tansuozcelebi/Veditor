@@ -13,12 +13,18 @@ const OVERSCAN = 8;
  * The playlist has well over ten thousand entries, so only the rows in view are in the DOM: the
  * scroller keeps its full height through a spacer and the visible window is positioned inside it.
  */
-export function ChannelList({ channels, selectedKey, onSelect, favoriteVersion }: {
+export function ChannelList({ channels, selectedKey, onSelect, favoriteVersion, resetKey }: {
   channels: Channel[];
   selectedKey: string | null;
   onSelect: (c: Channel) => void;
   /** Changes when a favourite is toggled, so the stars redraw. */
   favoriteVersion: number;
+  /**
+   * Changes when the filters, the sort order or the catalogue do – and only then. The array itself is
+   * rebuilt on every preference write (playing a channel is one), which must not throw the scroll
+   * position away.
+   */
+  resetKey: string;
 }) {
   const { t } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
@@ -35,7 +41,24 @@ export function ChannelList({ channels, selectedKey, onSelect, favoriteVersion }
   }, []);
 
   // a new filter or sort order starts at the top again
-  useEffect(() => { if (boxRef.current) boxRef.current.scrollTop = 0; setScrollTop(0); }, [channels]);
+  useEffect(() => { if (boxRef.current) boxRef.current.scrollTop = 0; setScrollTop(0); }, [resetKey]);
+
+  // Stepping through channels from the bar under the player moves the selection without touching the
+  // list, so bring it into view – but only when the selection itself changed, or scrolling away from
+  // the playing channel would keep snapping back.
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || !selectedKey) return;
+    const i = channels.findIndex((c) => c.key === selectedKey);
+    if (i < 0) return;
+    const view = el.clientHeight || ROW;
+    const top = i * ROW;
+    if (top >= el.scrollTop && top + ROW <= el.scrollTop + view) return;   // already in view
+    el.scrollTop = Math.max(0, Math.round(top - (view - ROW) / 2));
+    setScrollTop(el.scrollTop);
+    // `channels` is deliberately not a dependency: see above
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKey]);
 
   const first = Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN);
   const visible = channels.slice(first, first + Math.ceil(height / ROW) + OVERSCAN * 2);
@@ -52,14 +75,18 @@ export function ChannelList({ channels, selectedKey, onSelect, favoriteVersion }
         {visible.map((c, i) => {
           const index = first + i;
           const favorite = prefs.isFavorite(c.key);
+          const unplayable = prefs.unplayable(c.key);
           const meta = [c.group, c.countryName || c.country, c.languageNames[0], c.quality].filter(Boolean).join(' · ');
           return (
             <div
               key={c.key}
               data-key={c.key}
               data-index={index}
+              data-unplayable={unplayable || undefined}
               className={cn('channel-row absolute right-0 left-0 flex items-center gap-2 border-b px-2 select-none',
-                selectedKey === c.key ? 'bg-accent' : 'hover:bg-accent/50')}
+                selectedKey === c.key ? 'bg-accent' : 'hover:bg-accent/50',
+                // only visible while `hideUnplayable` is off – otherwise these rows are not here at all
+                unplayable && selectedKey !== c.key && 'opacity-45')}
               style={{ top: index * ROW, height: ROW }}
               onClick={() => onSelect(c)}
               onDoubleClick={() => onSelect(c)}
@@ -78,6 +105,7 @@ export function ChannelList({ channels, selectedKey, onSelect, favoriteVersion }
                   <span className="truncate text-sm">{c.sortName}</span>
                   {c.flag && <span className="shrink-0 text-xs">{c.flag}</span>}
                   {c.nsfw && <Badge variant="destructive" className="shrink-0 px-1 py-0 text-[9px]">{t('nsfw.badge')}</Badge>}
+                  {unplayable && <Badge variant="outline" className="channel-unplayable shrink-0 px-1 py-0 text-[9px]">{prefs.isHidden(c.key) ? t('hide.hidden') : t('hide.badge')}</Badge>}
                 </div>
                 {meta && <div className="text-muted-foreground truncate text-[11px]">{meta}</div>}
               </div>

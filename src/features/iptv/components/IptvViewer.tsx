@@ -4,9 +4,10 @@ import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { ChannelBar } from './ChannelBar';
 import { ChannelList } from './ChannelList';
 import { FilterBar } from './FilterBar';
-import { StreamPlayer } from './StreamPlayer';
+import { StreamPlayer, type ErrorKind } from './StreamPlayer';
 import { DEFAULT_SOURCES, facets as buildFacets, loadCatalog, type Catalog, type CatalogSources, type Channel, type LoadProgress } from '../engine/catalog';
 import { DEFAULT_SETTINGS, prefs, type ViewSettings } from '../engine/prefs';
 import { useI18n } from '../engine/i18n';
@@ -47,6 +48,9 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Channel | null>(null);
   const [search, setSearch] = useState(settings.search);
+  // where the playing channel sat the last time it was in the list, so stepping on from a channel
+  // the filters have since dropped carries on from there instead of jumping back to the top
+  const anchorRef = useRef(0);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // On a phone the filter block is taller than the list it filters, so it starts folded away there
   // and the header's menu button opens it. On a wide screen there is room for both.
@@ -87,6 +91,10 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
     const favorites = prefs.favoriteKeys();
     const list = all.filter((c) => {
       if (settings.hideNsfw && c.nsfw) return false;
+      // The channel on screen is exempt from the automatic hiding, and from that alone: a stream that
+      // fails while it plays must not vanish underfoot and take the navigation's place with it, while
+      // a filter the viewer set themselves still applies to everything.
+      if (settings.hideUnplayable && c.key !== selected?.key && prefs.unplayable(c.key)) return false;
       if (settings.onlyFavorites && !favorites.has(c.key)) return false;
       if (settings.group && c.group !== settings.group) return false;
       if (settings.category && !c.categories.includes(settings.category)) return false;
@@ -95,17 +103,54 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
       return terms.every((term) => c.search.includes(term));
     });
     return sortChannels(list, settings.sort, prefs.recentKeys());
-    // favourites and the recently-watched order live in the preference store, so `version` – which
-    // changes on every write there – is the dependency the linter cannot see
+    // favourites, the recently-watched order and the hidden channels live in the preference store, so
+    // `version` – which changes on every write there – is the dependency the linter cannot see
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [all, settings, version]);
+  }, [all, settings, version, selected?.key]);
 
   const play = useCallback((c: Channel) => { setSelected(c); prefs.markPlayed(c.key); }, []);
+
+  // ---------- stepping through the list ----------
+  const index = useMemo(() => (selected ? shown.findIndex((c) => c.key === selected.key) : -1), [shown, selected]);
+  useEffect(() => { if (index >= 0) anchorRef.current = index; }, [index]);
+
+  const step = useCallback((delta: number) => {
+    if (!shown.length) return;
+    const from = index >= 0 ? index : Math.min(anchorRef.current, shown.length - 1) - delta;
+    const next = (from + delta + shown.length) % shown.length;   // wraps, so the ends are never dead
+    play(shown[next]);
+  }, [shown, index, play]);
+
+  // the arrow keys do the same, unless something that takes typing has the focus
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      // a text field, a select, or the volume slider – all of them mean something else by an arrow
+      if (el && (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) || el.isContentEditable || el.closest('[role="slider"]'))) return;
+      e.preventDefault();
+      step(e.key === 'ArrowLeft' ? -1 : 1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [step]);
+
+  // what the player learns about a stream is remembered, so the list can leave the dead ones out
+  const onFailed = useCallback((c: Channel, reason: Exclude<ErrorKind, 'errPolicy'>) => prefs.markFailed(c.key, reason), []);
+  const onPlaying = useCallback((c: Channel) => prefs.markPlayable(c.key), []);
 
   const sendToEditor = useMemo(() => (onRecorded ? async (file: File) => {
     await onRecorded(file);
     toast.success(t('rec.added'));
   } : undefined), [onRecorded, t]);
+
+  // the list is rebuilt on every preference write, so the scroller is told apart what actually
+  // reorders it (filters, sort, catalogue) from what merely re-runs the pass
+  const listKey = [
+    settings.sort, settings.group, settings.category, settings.country, settings.language, settings.search,
+    settings.onlyFavorites, settings.hideNsfw, settings.hideUnplayable, all.length,
+  ].join('|');
 
   // shown as a dot on the menu button, so a filter left on is never invisible
   const narrowed = !!settings.group || !!settings.category || !!settings.country || !!settings.language
@@ -167,12 +212,18 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
         {!loading && !error && (
           <>
             <div className="text-muted-foreground border-b px-3 py-1 text-[11px]" id="channelCount">{t('list.count', { n: shown.length })}</div>
-            <ChannelList channels={shown} selectedKey={selected?.key ?? null} onSelect={play} favoriteVersion={version} />
+            <ChannelList channels={shown} selectedKey={selected?.key ?? null} onSelect={play} favoriteVersion={version} resetKey={listKey} />
           </>
         )}
       </aside>
 
-      <StreamPlayer channel={selected} onSendToEditor={sendToEditor} className="max-[900px]:order-1 max-[900px]:flex-none max-[900px]:border-b" />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col max-[900px]:order-1 max-[900px]:flex-none max-[900px]:border-b" id="playerColumn">
+        <StreamPlayer channel={selected} onSendToEditor={sendToEditor} onFailed={onFailed} onPlaying={onPlaying} />
+        <ChannelBar
+          channel={selected} index={index} total={shown.length} settings={settings} prefsVersion={version}
+          onPrev={() => step(-1)} onNext={() => step(1)}
+        />
+      </div>
       <Toaster position="bottom-center" richColors />
     </div>
   );

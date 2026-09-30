@@ -12,7 +12,8 @@ import { useI18n } from '../engine/i18n';
 import { canRecord, captureFrom, startRecording, type Recording } from '../engine/recorder';
 
 type Status = 'idle' | 'loading' | 'playing' | 'error';
-type ErrorKind = 'errCors' | 'errNetwork' | 'errMedia' | 'errPolicy';
+/** `errPolicy` is this page's own CSP, so it says nothing about the channel itself. */
+export type ErrorKind = 'errCors' | 'errNetwork' | 'errMedia' | 'errPolicy';
 
 const isHls = (url: string) => /\.m3u8(\?|$)/i.test(url);
 
@@ -23,10 +24,14 @@ const isHls = (url: string) => /\.m3u8(\?|$)/i.test(url);
  * segments through Media Source Extensions. That also makes the picture same-origin, which is what
  * lets the recorder capture it at all.
  */
-export function StreamPlayer({ channel, onSendToEditor, className }: {
+export function StreamPlayer({ channel, onSendToEditor, onFailed, onPlaying, className }: {
   channel: Channel | null;
   /** Hands a finished recording to the host (the editor page) – hidden when not provided. */
   onSendToEditor?: (file: File) => void | Promise<void>;
+  /** The stream was refused, unreachable or undecodable; never fired for the page's own CSP. */
+  onFailed?: (channel: Channel, reason: Exclude<ErrorKind, 'errPolicy'>) => void;
+  /** A picture arrived – whatever was remembered about this channel is out of date. */
+  onPlaying?: (channel: Channel) => void;
   className?: string;
 }) {
   const { t } = useI18n();
@@ -45,6 +50,11 @@ export function StreamPlayer({ channel, onSendToEditor, className }: {
   const [volume, setVolume] = useState(1);
   const [attempt, setAttempt] = useState(0);
 
+  // Kept in a ref so a caller that passes fresh closures cannot restart the stream: the channel
+  // effect only registers listeners, which read the ref long after this has run.
+  const reportRef = useRef({ onFailed, onPlaying });
+  useEffect(() => { reportRef.current = { onFailed, onPlaying }; });
+
   const teardown = useCallback(() => {
     hlsRef.current?.destroy();
     hlsRef.current = null;
@@ -61,7 +71,13 @@ export function StreamPlayer({ channel, onSendToEditor, className }: {
     let blocked = false;
     const onViolation = (e: SecurityPolicyViolationEvent) => { if (/media|connect|worker/.test(e.effectiveDirective)) blocked = true; };
     document.addEventListener('securitypolicyviolation', onViolation);
-    const fail = (kind: ErrorKind) => { setErrorKind(blocked ? 'errPolicy' : kind); setStatus('error'); };
+    const fail = (kind: ErrorKind) => {
+      const final = blocked ? 'errPolicy' : kind;
+      setErrorKind(final);
+      setStatus('error');
+      // a blocked request is this page's policy, not the channel's – it must not mark the channel
+      if (final !== 'errPolicy') reportRef.current.onFailed?.(channel, final);
+    };
 
     if (isHls(channel.url) && Hls.isSupported()) {
       const hls = new Hls({ enableWorker: true, backBufferLength: 60, manifestLoadingMaxRetry: 2, fragLoadingMaxRetry: 3, levelLoadingMaxRetry: 2 });
@@ -88,7 +104,7 @@ export function StreamPlayer({ channel, onSendToEditor, className }: {
       void video.play().catch(() => {});
     }
 
-    const onPlaying = () => setStatus('playing');
+    const onPlaying = () => { setStatus('playing'); reportRef.current.onPlaying?.(channel); };
     const onError = () => fail(video.error?.code === 4 ? 'errMedia' : 'errNetwork');
     video.addEventListener('playing', onPlaying);
     video.addEventListener('error', onError);
