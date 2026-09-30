@@ -531,27 +531,40 @@ try {
     }
     // A host can list an encoder it cannot actually run – h264_v4l2m2m and the other hardware
     // encoders are compiled in but have no device behind them on shared hosting. Advertising one
-    // would cost the browser a whole upload, so the endpoint has to try it first.
+    // would cost the browser a whole upload, so the endpoint has to try it first, and when the probe
+    // itself cannot run on that build only software encoders may be believed.
     {
-      const stub = join(outDir, 'fake-ffmpeg');
-      writeFileSync(stub, ['#!/bin/sh', 'case "$*" in', '  *-version*) echo "ffmpeg version 9.0 Copyright (c) 2000-2026"; exit 0 ;;',
-        "  *-encoders*) printf 'Encoders:\\n V..... h264_v4l2m2m V4L2 mem2mem H.264 encoder\\n A..... aac           AAC (Advanced Audio Coding)\\n'; exit 0 ;;",
-        'esac', 'exit 1', ''].join('\n'), { mode: 0o755 });
-      const stubJobs = join(outDir, 'convert-jobs-stub');
-      rmSync(stubJobs, { recursive: true, force: true }); mkdirSync(stubJobs, { recursive: true });
-      const stubPort = await new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); }); });
-      const stubPhp = spawn(phpBin, ['-S', `127.0.0.1:${stubPort}`, '-t', dist, join(root, 'test/php-router.php')], {
-        env: { ...process.env, VEDITOR_FFMPEG: stub, VEDITOR_WORKDIR: stubJobs }, stdio: 'ignore',
-      });
-      let stubHealth = null;
-      for (let i = 0; i < 40 && !stubHealth; i++) {
-        try { const r = await fetch(`http://127.0.0.1:${stubPort}/api/convert.php?action=health`); if (r.ok) stubHealth = await r.json(); } catch { /* not up yet */ }
-        if (!stubHealth) await new Promise((r) => setTimeout(r, 250));
+      const stubs = [
+        { name: 'refuses', encoders: ['V..... h264_v4l2m2m V4L2 mem2mem H.264 encoder', 'A..... aac AAC'], fail: '', expect: null,
+          what: 'an encoder the host lists but cannot run is not advertised' },
+        { name: 'untested-hw', encoders: ['V..... h264_v4l2m2m V4L2 mem2mem H.264 encoder', 'A..... aac AAC'], fail: "Unknown input format: 'lavfi'", expect: null,
+          what: 'a hardware encoder is not believed on a build where the probe cannot run' },
+        { name: 'untested-sw', encoders: ['V..... libx264 libx264 H.264', 'A..... aac AAC'], fail: "Unknown input format: 'lavfi'", expect: { video: 'libx264', tested: false },
+          what: 'a software encoder is believed on a build where the probe cannot run' },
+      ];
+      for (const stub of stubs) {
+        const bin = join(outDir, `fake-ffmpeg-${stub.name}`);
+        writeFileSync(bin, ['#!/bin/sh', 'case "$*" in', '  *-version*) echo "ffmpeg version 9.0 Copyright (c) 2000-2026"; exit 0 ;;',
+          `  *-encoders*) printf 'Encoders:\\n ${stub.encoders.join("\\n ")}\\n'; exit 0 ;;`,
+          'esac', stub.fail ? `echo "${stub.fail}" >&2` : ':', 'exit 1', ''].join('\n'), { mode: 0o755 });
+        const jobs = join(outDir, `convert-jobs-${stub.name}`);
+        rmSync(jobs, { recursive: true, force: true }); mkdirSync(jobs, { recursive: true });
+        const port = await new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); }); });
+        const php = spawn(phpBin, ['-S', `127.0.0.1:${port}`, '-t', dist, join(root, 'test/php-router.php')], {
+          env: { ...process.env, VEDITOR_FFMPEG: bin, VEDITOR_WORKDIR: jobs }, stdio: 'ignore',
+        });
+        let health = null;
+        for (let i = 0; i < 40 && !health; i++) {
+          try { const r = await fetch(`http://127.0.0.1:${port}/api/convert.php?action=health`); if (r.ok) health = await r.json(); } catch { /* not up yet */ }
+          if (!health) await new Promise((r) => setTimeout(r, 250));
+        }
+        const mp4 = health?.formats?.mp4;
+        check(stub.what, stub.expect
+          ? health?.ok === true && mp4?.video === stub.expect.video && mp4?.tested === stub.expect.tested
+          : health?.ok === false && health.reason === 'no-encoder' && Object.keys(health.formats || {}).length === 0 && health.ffmpeg === '9.0',
+          JSON.stringify(health));
+        php.kill('SIGTERM');
       }
-      check('an encoder the host lists but cannot run is not advertised',
-        stubHealth?.ok === false && stubHealth.reason === 'no-encoder' && Object.keys(stubHealth.formats || {}).length === 0 && stubHealth.ffmpeg === '9.0',
-        JSON.stringify(stubHealth));
-      stubPhp.kill('SIGTERM');
     }
 
     const b4 = await chromium.launch({ channel: 'chromium' });

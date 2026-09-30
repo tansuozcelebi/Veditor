@@ -138,12 +138,25 @@ function formats(): array {
             // in but fail without their device. Ask this ffmpeg to encode a fraction of a second and see.
             $audio = firstEncoder($wanted['audio']);
             $withAudio = $audio !== null ? encodes($format, $video, $audio) : 'no';
-            if ($withAudio !== 'no') { $map[$format] = ['video' => $video, 'audio' => $audio, 'tested' => $withAudio === 'ok']; break; }
-            $videoOnly = encodes($format, $video, null);
-            if ($videoOnly !== 'no') { $map[$format] = ['video' => $video, 'audio' => null, 'tested' => $videoOnly === 'ok']; break; }
+            $verdict = $withAudio !== 'no' ? $withAudio : encodes($format, $video, null);
+            if ($verdict === 'no') continue;
+            // When the probe could not run at all, the list is all there is – and a hardware encoder
+            // is exactly what a list gets wrong, so only software encoders are taken on trust.
+            if ($verdict === 'untested' && !isSoftwareEncoder($video)) continue;
+            $map[$format] = [
+                'video' => $video,
+                'audio' => $withAudio !== 'no' ? $audio : null,
+                'tested' => $verdict === 'ok',
+            ];
+            break;
         }
     }
     return $map;
+}
+
+/** Encoders that need no device: safe to believe when the probe itself cannot run on this build. */
+function isSoftwareEncoder(string $name): bool {
+    return (bool) preg_match('/^(libx26[45]|libopenh264|libvpx(-vp9)?|vp[89]|libsvtav1|libaom-av1|librav1e|mpeg4)$/', $name);
 }
 
 /**

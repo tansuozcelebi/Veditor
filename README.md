@@ -348,15 +348,17 @@ Encoder'ın listede görünmesi yetmez — `h264_v4l2m2m`, `h264_vaapi` gibi don
 ama paylaşımlı sunucuda arkalarında aygıt yoktur. Bu yüzden sunucu, aday encoder ile 0,3 saniyelik siyah bir
 test klibi üretmeyi dener ve yalnızca **çıkış kodu 0** ile tamamlananı duyurur (MP4 ilk kareden önce başlığı
 yazdığı için "dosya oluştu mu" sorusu yeterli değildir). Sonuç bir gün önbelleklenir. Kendi test klibini
-üretemeyen çok dar derlemelerde deneme sonuçsuz sayılır, liste olduğu gibi kabul edilir ve `formats` içindeki
-`tested: false` ile bildirilir (deploy çıktısında `not verifiable on this build` olarak görünür).
+üretemeyen çok dar derlemelerde deneme sonuçsuz sayılır ve `formats` içindeki `tested: false` ile bildirilir
+(deploy çıktısında `not verifiable on this build`). Bu durumda yalnızca **yazılım** encoder'ları (libx264,
+libvpx, libopenh264, AV1 …) listeye güvenilerek kabul edilir; `h264_v4l2m2m`, `h264_vaapi` gibi donanım
+encoder'ları elenir — listenin en çok yanıldığı yer tam olarak orasıdır.
 Duyurulan kapsayıcılar:
 `webm` (VP8/VP9 – telifli kodekler olmadan derlenmiş tarayıcılar dahil her yerde oynar) ve/veya `mp4`
 (H.264 – Chrome, Edge, Safari). Tarayıcı `canPlayType` ile kendi oynatabildiklerini belirler ve yalnızca
 **iki tarafın da desteklediği** biçimi ister. Ortak biçim yoksa dosya sunucuya **hiç yüklenmez**; doğrudan
 tarayıcıdaki dönüştürücü çalışır. (SiteGround'un sistem ffmpeg'i 9.0 sürümünde `libvpx` ve `libx264` yok; yalnızca
-çalışmayan bir donanım encoder'ı (`h264_v4l2m2m`) listeliyor — tam olarak bu durumdadır, bu yüzden aşağıdaki
-statik derleme gerekir.)
+aygıtsız bir donanım encoder'ı (`h264_v4l2m2m`) listeliyor ve kendi test klibini de üretemediği için bu
+encoder elenip `no-encoder` bildiriliyor — bu yüzden aşağıdaki statik derleme gerekir.)
 
 **Sunucuda açmak için**
 
