@@ -21,4 +21,6 @@ function NativeSelect({ className, size = 'default', ...props }: Omit<React.Comp
 
 function NativeSelectOption({ ...props }: React.ComponentProps<'option'>) { return <option data-slot="native-select-option" {...props} />; }
 
-export { NativeSelect, NativeSelectOption };
+function NativeSelectGroup({ ...props }: React.ComponentProps<'optgroup'>) { return <optgroup data-slot="native-select-group" {...props} />; }
+
+export { NativeSelect, NativeSelectOption, NativeSelectGroup };

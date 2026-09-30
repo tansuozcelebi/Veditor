@@ -1,17 +1,17 @@
 #EXTM3U x-tvg-url="https://example.invalid/epg.xml.gz"
-#EXTINF:-1 tvg-id="Haber1.tr" tvg-logo="/logo-haber.png" group-title="Haber, Politika",Haber 1 (1080p)
+#EXTINF:-1 tvg-id="Haber1.tr@SD" tvg-logo="/logo-haber.png" group-title="Haber, Politika",Haber 1 (1080p)
 /media/clipA.webm
 #EXTINF:-1 tvg-id="Muzik1.tr" tvg-logo="" group-title="Müzik",Müzik 1 (720p)
 /media/clipB.webm
-#EXTINF:-1 tvg-id="Spor1.de" group-title="Spor",Sport Eins (1080p) [Not 24/7]
+#EXTINF:-1 tvg-id="Spor1.de@HD" group-title="Spor",Sport Eins (1080p) [Not 24/7]
 #EXTVLCOPT:http-referrer=https://example.invalid/
 #EXTVLCOPT:http-user-agent=Mozilla/5.0 (VLC)
 https://stream.invalid/sport/index.m3u8
-#EXTINF:-1 tvg-id="News24.us" tvg-logo="/logo-news.png",News 24
+#EXTINF:-1 tvg-id="News24.us@HD" tvg-logo="/logo-news.png",News 24
 #EXTGRP:News
 https://stream.invalid/news/playlist.m3u8
 #EXTINF:-1 tvg-id="Adult1.us" group-title="XXX",Adult One (480p)
 https://stream.invalid/adult/index.m3u8
 #EXTINF:-1,Kaynaksız Kanal
-#EXTINF:-1 tvg-id="Haber1.tr" group-title="Haber, Politika",Haber 1 yedek
+#EXTINF:-1 tvg-id="Haber1.tr@HD" group-title="Haber, Politika",Haber 1 yedek
 /media/clipA.webm

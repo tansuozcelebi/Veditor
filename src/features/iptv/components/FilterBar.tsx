@@ -1,26 +1,35 @@
 import { Search, Star, X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { NativeSelect, NativeSelectOption, NativeSelectGroup } from '@/components/ui/native-select';
 import { useI18n } from '../engine/i18n';
 import { DEFAULT_SETTINGS, prefs, type SortKey, type ViewSettings } from '../engine/prefs';
 import type { Facet } from '../engine/catalog';
 
 const SORTS: SortKey[] = ['name', 'name-desc', 'group', 'country', 'recent', 'playlist'];
 
-function FacetSelect({ id, label, value, options, onChange }: {
-  id: string; label: string; value: string; options: Facet[]; onChange: (v: string) => void;
+function FacetSelect({ id, label, value, options, onChange, className }: {
+  id: string; label: string; value: string; options: Facet[]; onChange: (v: string) => void; className?: string;
 }) {
   const { t } = useI18n();
+  const option = (o: Facet) => <NativeSelectOption key={o.value} value={o.value}>{o.label} ({o.count})</NativeSelectOption>;
+  // the country list puts Türkiye in a section of its own at the top; the others are one flat list
+  const pinned = options.filter((o) => o.group === 'pinned');
   return (
-    <label className="flex min-w-0 flex-col gap-1">
+    <label className={cn('flex min-w-0 flex-col gap-1', className)}>
       <span className="text-muted-foreground text-[11px] uppercase">{label}</span>
       <NativeSelect id={id} size="sm" value={value} onChange={(e) => onChange(e.target.value)}>
         <NativeSelectOption value="">{t('filter.all')}</NativeSelectOption>
-        {options.map((o) => <NativeSelectOption key={o.value} value={o.value}>{o.label} ({o.count})</NativeSelectOption>)}
+        {pinned.length === 0
+          ? options.map(option)
+          : (<>
+            <NativeSelectGroup label={t('filter.pinned')}>{pinned.map(option)}</NativeSelectGroup>
+            <NativeSelectGroup label={t('filter.rest')}>{options.filter((o) => o.group !== 'pinned').map(option)}</NativeSelectGroup>
+          </>)}
       </NativeSelect>
     </label>
   );
@@ -67,16 +76,18 @@ export function FilterBar({ settings, facets, search, open, onSearch, onChange, 
       <div className="grid grid-cols-2 gap-2">
         <FacetSelect id="filterGroup" label={t('filter.group')} value={settings.group} options={facets.groups} onChange={(group) => onChange({ group })} />
         <FacetSelect id="filterCategory" label={t('filter.category')} value={settings.category} options={facets.categories} onChange={(category) => onChange({ category })} />
-        <FacetSelect id="filterCountry" label={t('filter.country')} value={settings.country} options={facets.countries} onChange={(country) => onChange({ country })} />
         <FacetSelect id="filterLanguage" label={t('filter.language')} value={settings.language} options={facets.languages} onChange={(language) => onChange({ language })} />
+        <label className="flex min-w-0 flex-col gap-1">
+          <span className="text-muted-foreground text-[11px] uppercase">{t('sort.label')}</span>
+          <NativeSelect id="sortSelect" size="sm" value={settings.sort} onChange={(e) => onChange({ sort: e.target.value as SortKey })}>
+            {SORTS.map((s) => <NativeSelectOption key={s} value={s}>{t('sort.' + s)}</NativeSelectOption>)}
+          </NativeSelect>
+        </label>
+        <FacetSelect
+          id="filterCountry" className="col-span-2" label={t('filter.country')} value={settings.country}
+          options={facets.countries} onChange={(country) => onChange({ country })}
+        />
       </div>
-
-      <label className="flex min-w-0 flex-col gap-1">
-        <span className="text-muted-foreground text-[11px] uppercase">{t('sort.label')}</span>
-        <NativeSelect id="sortSelect" size="sm" value={settings.sort} onChange={(e) => onChange({ sort: e.target.value as SortKey })}>
-          {SORTS.map((s) => <NativeSelectOption key={s} value={s}>{t('sort.' + s)}</NativeSelectOption>)}
-        </NativeSelect>
-      </label>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <Label className="gap-1.5 text-xs">

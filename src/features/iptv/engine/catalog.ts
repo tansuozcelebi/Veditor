@@ -6,7 +6,7 @@
 // live on the channel and now live on the feed – so each is read defensively and the viewer still
 // works from the playlist alone when the API is unreachable or has moved on.
 import { cleanName, parseM3u, readQuality, type M3uEntry } from './m3u';
-import { idbGet, idbSet } from './idb';
+import { idbDelete, idbGet, idbSet } from './idb';
 
 export interface CatalogSources {
   playlist: string;
@@ -60,7 +60,7 @@ export interface Catalog {
 export type LoadStage = 'playlist' | 'metadata' | 'building' | 'done';
 export interface LoadProgress { stage: LoadStage; loaded?: number; total?: number }
 
-const CACHE_KEY = 'catalog.v1';
+const CACHE_KEY = 'catalog.v2';        // v1 held the pre-feed-split join – it must not be reused
 const CACHE_TTL = 12 * 60 * 60 * 1000;
 
 interface ApiChannel {
@@ -69,6 +69,28 @@ interface ApiChannel {
 }
 interface ApiFeed { channel?: string; id?: string; is_main?: boolean; languages?: string[]; video_format?: string }
 interface ApiNamed { code?: string; id?: string; name?: string; flag?: string; languages?: string[] }
+
+/**
+ * The playlist's tvg-id is `ChannelId[@FeedId]` – `BBCNews.uk@SD`, `TRT1.tr@HD`. The API keys on the
+ * channel id alone and lists the feeds separately, so the two parts have to be told apart before
+ * anything can be looked up. An id without a feed is left exactly as it is.
+ */
+export function splitTvgId(tvgId: string): { channelId: string; feedId: string } {
+  const at = tvgId.indexOf('@');
+  return at < 0 ? { channelId: tvgId, feedId: '' } : { channelId: tvgId.slice(0, at), feedId: tvgId.slice(at + 1) };
+}
+
+/**
+ * A channel id ends in its country: `TRT1.tr` → `TR`. Only a real two-letter suffix counts, so a
+ * dotted name that means something else (`News.24`, and anything with a feed still attached) leaves
+ * the country unknown rather than inventing one.
+ */
+export function countryFromId(channelId: string): string | undefined {
+  const dot = channelId.lastIndexOf('.');
+  if (dot < 0) return undefined;
+  const code = channelId.slice(dot + 1);
+  return /^[A-Za-z]{2}$/.test(code) ? code.toUpperCase() : undefined;
+}
 
 /** Downloads a text resource, reporting bytes when the server declares a length. */
 async function fetchText(url: string, signal?: AbortSignal, onProgress?: (loaded: number, total: number) => void): Promise<string> {
@@ -110,19 +132,24 @@ function build(entries: M3uEntry[], meta: {
   countries: Map<string, ApiNamed>;
   categories: Map<string, ApiNamed>;
 }): Channel[] {
-  // languages per channel: the feed knows them in the current schema, the channel did in the old one
+  // Languages per feed, plus one entry per channel for the main feed: the feed knows them in the
+  // current schema, the channel did in the old one. Keyed the same way the playlist writes its ids.
   const feedLanguages = new Map<string, string[]>();
   for (const feed of meta.feeds) {
     const channel = feed.channel;
     if (!channel || !feed.languages?.length) continue;
+    if (feed.id) feedLanguages.set(`${channel}@${feed.id}`, feed.languages);
     if (feed.is_main || !feedLanguages.has(channel)) feedLanguages.set(channel, feed.languages);
   }
   const seen = new Set<string>();
   return entries.map((e) => {
-    const api = e.tvgId ? meta.channels.get(e.tvgId) : undefined;
-    const country = api?.country || (e.tvgId.includes('.') ? e.tvgId.split('.').pop()!.toUpperCase() : undefined);
+    // `Haber1.tr@HD` is the HD feed of `Haber1.tr`; only the channel id is in the API's channel list
+    const { channelId, feedId } = splitTvgId(e.tvgId);
+    const api = channelId ? meta.channels.get(channelId) : undefined;
+    const country = api?.country || countryFromId(channelId);
     const countryRow = country ? meta.countries.get(country) : undefined;
-    const languages = feedLanguages.get(e.tvgId) || api?.languages || countryRow?.languages || [];
+    const languages = (feedId ? feedLanguages.get(`${channelId}@${feedId}`) : undefined)
+      || feedLanguages.get(channelId) || api?.languages || countryRow?.languages || [];
     const categories = api?.categories || [];
     const name = e.name || e.tvgId || e.url;
     let key = e.tvgId ? `${e.tvgId}|${e.url}` : e.url;
@@ -149,7 +176,7 @@ function build(entries: M3uEntry[], meta: {
       languages,
       languageNames,
       nsfw: !!api?.is_nsfw,
-      search: [name, e.tvgId, e.group, countryRow?.name, ...categoryNames, ...languageNames].filter(Boolean).join(' ').toLowerCase(),
+      search: [name, e.tvgId, e.group, country, countryRow?.name, ...categoryNames, ...languageNames].filter(Boolean).join(' ').toLowerCase(),
     };
   });
 }
@@ -161,6 +188,7 @@ function build(entries: M3uEntry[], meta: {
 export async function loadCatalog({ sources = DEFAULT_SOURCES, refresh = false, signal, onProgress }: {
   sources?: CatalogSources; refresh?: boolean; signal?: AbortSignal; onProgress?: (p: LoadProgress) => void;
 } = {}): Promise<Catalog> {
+  void idbDelete('catalog.v1').catch(() => {});   // whatever is left of the pre-feed-split catalogue
   if (!refresh) {
     const cached = await idbGet<Catalog & { sources?: CatalogSources }>(CACHE_KEY).catch(() => null);
     if (cached?.channels?.length && Date.now() - cached.report.fetchedAt < CACHE_TTL
@@ -209,7 +237,23 @@ export async function loadCatalog({ sources = DEFAULT_SOURCES, refresh = false, 
   return catalog;
 }
 
-export interface Facet { value: string; label: string; count: number }
+export interface Facet {
+  value: string;
+  label: string;
+  count: number;
+  /** Set when the options are shown in sections; '' is the unnamed rest. */
+  group?: 'pinned' | '';
+}
+
+/** This viewer is Turkish-first, so Türkiye leads the country list however few channels it carries. */
+export const PINNED_COUNTRY = 'TR';
+
+/** `🇹🇷 TR · Türkiye` – the two-letter code the playlist carries, with the name spelled out beside it. */
+function countryLabel(c: Channel): string {
+  const code = c.country!;
+  const name = c.countryName && c.countryName.toUpperCase() !== code ? ` · ${c.countryName}` : '';
+  return `${c.flag ? c.flag + ' ' : ''}${code}${name}`;
+}
 
 /** The distinct values behind each filter, with how many channels carry them, most common first. */
 export function facets(channels: Channel[]) {
@@ -225,10 +269,13 @@ export function facets(channels: Channel[]) {
     }
     return [...map.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   };
+  const countries: Facet[] = tally((c) => (c.country ? [[c.country, countryLabel(c)]] : []))
+    .map((f) => ({ ...f, group: f.value === PINNED_COUNTRY ? 'pinned' as const : '' as const }))
+    .sort((a, b) => (a.group === 'pinned' ? 0 : 1) - (b.group === 'pinned' ? 0 : 1));
   return {
     groups: tally((c) => (c.group ? [[c.group, c.group]] : [])),
     categories: tally((c) => c.categories.map((id, i) => [id, c.categoryNames[i] || id] as [string, string])),
-    countries: tally((c) => (c.country ? [[c.country, `${c.flag ? c.flag + ' ' : ''}${c.countryName || c.country}`]] : [])),
+    countries,
     languages: tally((c) => c.languages.map((id, i) => [id, c.languageNames[i] || id] as [string, string])),
   };
 }
