@@ -1,0 +1,7 @@
+#EXTM3U
+#EXTINF:-1 tvg-id="Hls1.tr@HD" group-title="Test",HLS Kanal
+/iptv/hls/stream.m3u8
+#EXTINF:-1 tvg-id="Olu1.tr" group-title="Test",Olu Kanal
+https://stream.invalid/dead/index.m3u8
+#EXTINF:-1 tvg-id="Sayfa1.tr" group-title="Test",Sayfa Donen Kanal
+/iptv/yok/bulunamadi.m3u8

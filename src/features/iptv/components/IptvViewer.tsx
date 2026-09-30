@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Menu, RefreshCw, Tv, X } from 'lucide-react';
+import { Menu, RefreshCw, Radar, Square, Tv, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { FilterBar } from './FilterBar';
 import { StreamPlayer, type ErrorKind } from './StreamPlayer';
 import { DEFAULT_SOURCES, facets as buildFacets, loadCatalog, type Catalog, type CatalogSources, type Channel, type LoadProgress } from '../engine/catalog';
 import { DEFAULT_SETTINGS, prefs, type ViewSettings } from '../engine/prefs';
+import { canScan, DEFAULT_THREADS, startScan, type ScanHandle, type ScanProgress } from '../engine/prober';
 import { useI18n } from '../engine/i18n';
 
 export interface IptvViewerProps {
@@ -54,6 +55,8 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
   const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // On a phone the filter block is taller than the list it filters, so it starts folded away there
   // and the header's menu button opens it. On a wide screen there is room for both.
+  const [scan, setScan] = useState<ScanProgress | null>(null);
+  const scanRef = useRef<ScanHandle | null>(null);
   const [wide, setWide] = useState(() => typeof matchMedia === 'function' ? matchMedia('(min-width: 901px)').matches : true);
   const [filtersOpen, setFiltersOpen] = useState(wide);
   useEffect(() => {
@@ -136,6 +139,30 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
     return () => window.removeEventListener('keydown', onKey);
   }, [step]);
 
+  // Asks every channel in the list whether it opens, ten at a time on their own threads, and records
+  // each answer where a playback failure would have been recorded – so the list hides the dead ones
+  // by the switch that is already there.
+  const stopScan = useCallback(() => { scanRef.current?.stop(); scanRef.current = null; setScan(null); }, []);
+
+  const runScan = useCallback(() => {
+    if (scanRef.current) { stopScan(); return; }
+    if (!canScan()) { toast.error(t('scan.unsupported')); return; }
+    const list = shown.slice();
+    if (!list.length) return;
+    const handle = startScan(list, { threads: DEFAULT_THREADS, onProgress: setScan });
+    scanRef.current = handle;
+    prefs.update({ hideUnplayable: true });      // the point of the scan is to act on what it finds
+    void handle.finished.then((end) => {
+      scanRef.current = null;
+      setScan(null);
+      if (end.stopped) toast.info(t('scan.stopped', { n: end.done, bad: end.failed }));
+      else toast.success(t('scan.done', { n: end.total, bad: end.failed }), { duration: 8000 });
+    });
+  }, [shown, stopScan, t]);
+
+  // a scan left running while the page goes away would keep hammering hosts for nothing
+  useEffect(() => () => { scanRef.current?.stop(); scanRef.current = null; }, []);
+
   // what the player learns about a stream is remembered, so the list can leave the dead ones out
   const onFailed = useCallback((c: Channel, reason: Exclude<ErrorKind, 'errPolicy'>) => prefs.markFailed(c.key, reason), []);
   const onPlaying = useCallback((c: Channel) => prefs.markPlayable(c.key), []);
@@ -183,7 +210,14 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
             {filtersOpen ? <X /> : <Menu />}
             {!filtersOpen && narrowed && <span className="absolute mt-4 ml-4 size-1.5 rounded-full bg-red-500" />}
           </Button>
-          <Button id="btnRefresh" variant="ghost" size="icon-sm" title={t('load.refresh')} disabled={loading} onClick={() => load(true)}>
+          <Button
+            id="btnScan" variant="ghost" size="icon-sm" disabled={loading || !shown.length}
+            title={scan ? t('scan.stop') : t('scan.start', { n: shown.length, threads: DEFAULT_THREADS })}
+            onClick={runScan}
+          >
+            {scan ? <Square className="text-red-400" /> : <Radar />}
+          </Button>
+          <Button id="btnRefresh" variant="ghost" size="icon-sm" title={t('load.refresh')} disabled={loading || !!scan} onClick={() => load(true)}>
             <RefreshCw className={cn(loading && 'animate-spin')} />
           </Button>
         </div>
@@ -211,7 +245,17 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
 
         {!loading && !error && (
           <>
-            <div className="text-muted-foreground border-b px-3 py-1 text-[11px]" id="channelCount">{t('list.count', { n: shown.length })}</div>
+            {scan
+              ? (
+                <div className="flex items-center gap-2 border-b bg-sky-950/40 px-3 py-1 text-[11px] text-sky-200" id="scanProgress" data-done={scan.done} data-total={scan.total} data-failed={scan.failed}>
+                  <span className="min-w-0 flex-1 truncate">{t('scan.running', { done: scan.done, total: scan.total, bad: scan.failed })}</span>
+                  <span className="bg-sky-900/60 h-1 w-16 shrink-0 overflow-hidden rounded-full" aria-hidden>
+                    <span className="block h-full bg-sky-400 transition-[width]" style={{ width: `${scan.total ? Math.round((scan.done / scan.total) * 100) : 0}%` }} />
+                  </span>
+                  <Button id="btnScanStop" size="xs" variant="ghost" className="shrink-0" onClick={stopScan}>{t('scan.stop')}</Button>
+                </div>
+              )
+              : <div className="text-muted-foreground border-b px-3 py-1 text-[11px]" id="channelCount">{t('list.count', { n: shown.length })}</div>}
             <ChannelList channels={shown} selectedKey={selected?.key ?? null} onSelect={play} favoriteVersion={version} resetKey={listKey} />
           </>
         )}

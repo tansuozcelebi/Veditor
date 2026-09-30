@@ -36,7 +36,10 @@ const RECENTS_MAX = 60;
 // A stream that is down today may well be back next week, so a remembered failure expires; the cap
 // keeps a long session of clicking through thousands of channels from filling the storage quota.
 const FAILED_TTL = 7 * 24 * 60 * 60 * 1000;
-const FAILED_MAX = 500;
+// A scan of the whole list can legitimately mark thousands at once, so the cap has to hold the
+// catalogue rather than a browsing session's worth of it.
+const FAILED_MAX = 20000;
+const FAILED_WRITE_DELAY = 500;
 
 function read<T>(key: string, fallback: T): T {
   try {
@@ -79,13 +82,50 @@ let settings: ViewSettings = read(KEYS.settings, DEFAULT_SETTINGS);
 /** Bumped on every change so useSyncExternalStore sees a new snapshot. */
 let version = 0;
 
-function writeFailures() {
-  if (failed.size > FAILED_MAX) {
-    const keep = [...failed.entries()].sort((a, b) => b[1].at - a[1].at).slice(0, FAILED_MAX);
-    failed.clear();
-    for (const [key, value] of keep) failed.set(key, value);
+/** Counting these on every render would be quadratic during a scan, so the answer is kept. */
+let unplayableCache = -1;
+
+function writeFailedStore(): boolean {
+  try { localStorage.setItem(KEYS.failed, JSON.stringify(Object.fromEntries(failed))); return true; }
+  catch { return false; }                              // private mode, or the quota is spent
+}
+
+let failedDirty = false;
+let failedTimer: ReturnType<typeof setTimeout> | undefined;
+
+function flushFailures() {
+  clearTimeout(failedTimer);
+  failedTimer = undefined;
+  if (!failedDirty) return;
+  failedDirty = false;
+  // a Map iterates in insertion order, so the oldest marks are at the front
+  while (failed.size > FAILED_MAX) {
+    const oldest = failed.keys().next();
+    if (oldest.done) break;
+    failed.delete(oldest.value);
   }
-  write(KEYS.failed, Object.fromEntries(failed));
+  if (writeFailedStore()) return;
+  // the store would not take it: keep the newer half and try once more, rather than lose the lot
+  const keep = [...failed.entries()].slice(-Math.ceil(failed.size / 2));
+  failed.clear();
+  for (const [key, value] of keep) failed.set(key, value);
+  unplayableCache = -1;
+  writeFailedStore();
+}
+
+/**
+ * Marking a channel is cheap; rewriting the whole store for each one is not, and a scan marks them
+ * in their thousands. The write is coalesced, and forced out before the page can go away with it.
+ */
+function writeFailures() {
+  unplayableCache = -1;
+  failedDirty = true;
+  if (!failedTimer) failedTimer = setTimeout(flushFailures, FAILED_WRITE_DELAY);
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushFailures);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushFailures(); });
 }
 
 export const prefs = {
@@ -113,6 +153,7 @@ export const prefs = {
   toggleHidden(key: string) {
     if (hidden.has(key)) hidden.delete(key); else hidden.add(key);
     write(KEYS.hidden, [...hidden]);
+    unplayableCache = -1;
     version++; announce();
   },
   /** What the player last ran into on this channel, or null if it never failed here. */
@@ -133,17 +174,25 @@ export const prefs = {
   /** Either marked by hand or remembered as broken – what `hideUnplayable` leaves out. */
   unplayable(key: string) { return hidden.has(key) || failed.has(key); },
   unplayableCount() {
+    if (unplayableCache >= 0) return unplayableCache;
     let n = hidden.size;
     for (const key of failed.keys()) if (!hidden.has(key)) n++;
+    unplayableCache = n;
     return n;
   },
   clearUnplayable() {
     hidden.clear();
     failed.clear();
+    failedDirty = false;
+    clearTimeout(failedTimer);
+    failedTimer = undefined;
+    unplayableCache = -1;
     write(KEYS.hidden, []);
     write(KEYS.failed, {});
     version++; announce();
   },
+  /** Writes out anything the coalesced failure store is still holding. */
+  flush() { flushFailures(); },
 
   settings() { return settings; },
   update(patch: Partial<ViewSettings>) {

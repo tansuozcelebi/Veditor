@@ -13,7 +13,7 @@ const fixtures = join(root, 'test/fixtures');
 const outDir = join(root, 'test/output'); mkdirSync(outDir, { recursive: true });
 if (!existsSync(join(fixtures, 'clipA.webm'))) { console.log('generating fixtures…'); const r = spawnSync(process.execPath, [join(root, 'test/gen-fixtures.mjs')], { stdio: 'inherit' }); if (r.status !== 0) process.exit(1); }
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webm': 'video/webm', '.wav': 'audio/wav', '.json': 'application/json', '.m3u': 'application/x-mpegurl' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webm': 'video/webm', '.wav': 'audio/wav', '.json': 'application/json', '.m3u': 'application/x-mpegurl', '.m3u8': 'application/vnd.apple.mpegurl', '.m4s': 'video/iso.segment', '.mp4': 'video/mp4' };
 // Serves the production build (dist/) with an SPA fallback, so the React router route /video-editor resolves.
 const dist = join(root, 'dist');
 if (!existsSync(join(dist, 'index.html'))) { console.error('dist/index.html not found – run `npm run build` first'); process.exit(1); }
@@ -807,6 +807,7 @@ try {
 
     // ---- stepping through the list, and leaving out what will not play ----
     // The click above just failed, so the bar under the player has something to remember.
+    await p5.waitForTimeout(700);                 // the failure store is written coalesced, not per mark
     const remembered = await p5.evaluate(() => {
       const stage = document.getElementById('playerStage').getBoundingClientRect();
       const bar = document.getElementById('channelBar').getBoundingClientRect();
@@ -946,6 +947,90 @@ try {
       await phone.screenshot({ path: join(outDir, 'live-tv-phone.png') }).catch(() => {});
     } finally {
       await phone.close();
+    }
+
+    // ---- a real HLS channel: recorded without a decoder, and the whole list swept for dead ones ----
+    // test/fixtures/hls is a VP9 + Opus fragmented-MP4 stream, which is what this Chromium can play:
+    // it ships no H.264 or AAC, exactly like a browser that refuses a stream for any other reason.
+    const tv2 = await b5.newPage({ viewport: { width: 1400, height: 900 }, locale: 'tr-TR' });
+    const errs6 = [];
+    tv2.on('pageerror', (e) => errs6.push(e.message));
+    try {
+      await tv2.goto(`${base}/player?playlist=/iptv/live.m3u&api=`);
+      await tv2.waitForSelector('#channelList .channel-row', { timeout: 60000 });
+      await tv2.click('.channel-row >> text=HLS Kanal');
+      await tv2.waitForFunction(() => document.getElementById('playerStatus')?.dataset.status === 'playing', null, { timeout: 30000 });
+
+      await tv2.click('#btnRecord');
+      await tv2.waitForSelector('#recBadge', { timeout: 10000 });
+      await tv2.waitForTimeout(2500);
+      await tv2.click('#btnRecord');
+      await tv2.waitForSelector('#recResult', { timeout: 30000 });
+      // The segments are the broadcaster's own bytes, so the file has to open as a real video: the
+      // head must carry the initialisation segment, without which no player can read the fragments.
+      const kept = await tv2.evaluate(async () => {
+        const a = document.querySelector('#recResult a[download]');
+        const buf = new Uint8Array(await (await fetch(a.href)).arrayBuffer());
+        const probe = document.createElement('video');
+        probe.src = a.href;
+        probe.muted = true;
+        const meta = await new Promise((res) => {
+          probe.onloadedmetadata = () => res({ duration: probe.duration, w: probe.videoWidth, h: probe.videoHeight });
+          probe.onerror = () => res(null);
+          setTimeout(() => res(null), 10000);
+        });
+        return {
+          name: a.getAttribute('download'),
+          label: document.getElementById('recResult').textContent.replace(/\s+/g, ' ').trim(),
+          bytes: buf.length,
+          firstBox: String.fromCharCode(...buf.subarray(4, 8)),
+          meta,
+        };
+      });
+      check('an HLS channel is recorded from its own segments, and the file really opens',
+        kept.name === 'HLS Kanal.mp4' && kept.firstBox === 'ftyp' && kept.bytes > 20000
+          && /orijinal kalite/.test(kept.label) && !!kept.meta && kept.meta.w === 320
+          && kept.meta.duration > 1 && kept.meta.duration < 7,
+        JSON.stringify(kept));
+
+      await tv2.click('#btnRecToEditor');
+      await tv2.waitForFunction(() => window.veditor && window.veditor.store, null, { timeout: 30000 });
+      await tv2.waitForFunction(() => [...(window.veditor?.store.media.values() ?? [])].some((m) => !m.analyzing), null, { timeout: 90000 }).catch(() => null);
+      const imported = await tv2.evaluate(() => [...window.veditor.store.media.values()].map((m) => ({ name: m.name, kind: m.kind, duration: +m.duration.toFixed(1), w: m.width })));
+      check('the lossless recording imports into the editor as a usable clip',
+        imported.length === 1 && imported[0].kind === 'video' && imported[0].w === 320 && imported[0].duration > 1,
+        JSON.stringify(imported));
+
+      // ---- the scan: every channel asked, on its own thread, and the dead ones left out ----
+      await tv2.goto(`${base}/player?playlist=/iptv/live.m3u&api=`);
+      await tv2.waitForSelector('#channelList .channel-row', { timeout: 60000 });
+      await tv2.evaluate(() => { localStorage.removeItem('veditor.iptv.failed'); localStorage.removeItem('veditor.iptv.hidden'); });
+      await tv2.reload();
+      await tv2.waitForSelector('#channelList .channel-row', { timeout: 60000 });
+      const beforeScan = await tv2.textContent('#channelCount');
+      await tv2.click('#btnScan');
+      await tv2.waitForSelector('#scanProgress', { timeout: 15000 });
+      const running = await tv2.evaluate(() => document.getElementById('scanProgress').textContent.replace(/\s+/g, ' ').trim());
+      await tv2.waitForSelector('#channelCount', { timeout: 120000 });
+      await tv2.waitForTimeout(600);
+      const swept = await tv2.evaluate(() => ({
+        count: document.getElementById('channelCount').textContent,
+        rows: [...document.querySelectorAll('.channel-row')].map((r) => r.querySelector('span').textContent),
+        reasons: Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem('veditor.iptv.failed') || '{}')).map(([k, v]) => [k.split('|')[0], v.reason])),
+        hideOn: JSON.parse(localStorage.getItem('veditor.iptv.settings') || '{}').hideUnplayable,
+      }));
+      check('the scan asks every channel and leaves out the ones that will not open',
+        /^3 kanal/.test(beforeScan) && /Taranıyor/.test(running)
+          && swept.rows.join() === 'HLS Kanal' && /^1 kanal/.test(swept.count) && swept.hideOn === true
+          && swept.reasons['Olu1.tr'] === 'errCors'          // a host that refuses the browser
+          && swept.reasons['Sayfa1.tr'] === 'errMedia'       // answered, but with a page, not a stream
+          && !swept.reasons['Hls1.tr@HD'],                   // the one that works is left alone
+        JSON.stringify(swept));
+
+      check('no page errors (recording and scan run)', errs6.length === 0, errs6.join(' ; ').slice(0, 300));
+    } finally {
+      await tv2.screenshot({ path: join(outDir, 'live-tv-scan.png') }).catch(() => {});
+      await tv2.close();
     }
 
     check('no page errors (live TV run)', errs5.length === 0, errs5.join(' ; ').slice(0, 300));
