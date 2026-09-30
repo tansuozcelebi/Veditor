@@ -86,6 +86,10 @@ yetişkin işareti, logo) verir. İkisi `tvg-id` üzerinden eşleştirilir.
   editörüne medya olarak eklenir.
 - **Kendi listeniz:** `/player?playlist=<m3u adresi>&api=<iptv-org api adresi>` ile başka bir liste
   yüklenebilir (`api` boş bırakılırsa yalnızca listenin kendi grupları kullanılır).
+- **Telefonda:** oynatıcı üstte 16:9 bir şerit olur, kalan yüksekliğin tamamını kanal listesi alır.
+  Arama kutusu her zaman görünür; grup/kategori/ülke/dil filtreleri ile sıralama başlıktaki
+  **☰ menü düğmesinin** altına katlanır (açıkken de liste altta kaydırılabilir kalır). Katlanmış
+  hâldeyken etkin bir filtre varsa düğmede kırmızı bir nokta belirir.
 
 Liste birkaç MB'tır; ilk yüklemeden sonra IndexedDB'de 12 saat saklanır, sağ üstteki yenile
 düğmesiyle tazelenir.
@@ -273,8 +277,9 @@ Canlı TV sayfası, `test/fixtures/iptv/` altındaki sahte bir iptv-org listesin
 genel yayına bağlanılmaz): listenin ayrıştırılması (grup adındaki virgül, `#EXTGRP`, `#EXTVLCOPT`,
 URL'siz satır), API birleştirmesi (ülke/dil/kategori), dil filtresi, yetişkin süzgeci, sıralama,
 arama, favorinin yeniden yüklemeden sonra kalması, kanalın oynaması, kaydın **editöre klip olarak**
-düşmesi, erişilemeyen yayının kendini açıklaması ve ekran paylaşımının (tarayıcı seçicisi taklit
-edilerek) hem görüntülenip hem kaydedilmesi. Panel yerleşimi de gerçek fare ile sınanır: bir panel sekmesi sürüklenip başka bir panelin üzerine bırakılır,
+düşmesi, erişilemeyen yayının kendini açıklaması, ekran paylaşımının (tarayıcı seçicisi taklit
+edilerek) hem görüntülenip hem kaydedilmesi ve **telefon boyutunda** listenin yeterli yüksekliği
+alıp filtrelerin menü düğmesiyle açılıp kapanması. Panel yerleşimi de gerçek fare ile sınanır: bir panel sekmesi sürüklenip başka bir panelin üzerine bırakılır,
 **Yerleşim** menüsünden panel gizlenip geri açılır, düzenin saklandığı ve varsayılana dönüldüğü doğrulanır;
 kaynak oynatıcının seçilen klibi oynattığı, üzerine bırakılan dosyayı içe aktardığı ve zaman çizelgesi ile
 aynı anda ses vermediği kontrol edilir. Ayrıca ayrı tarayıcı oturumlarında gerçek tıklama ile oynatma, dar bir

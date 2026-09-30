@@ -25,12 +25,18 @@ function FacetSelect({ id, label, value, options, onChange }: {
   );
 }
 
-/** Search, the four facets, the sort order and the two switches – everything that narrows the list. */
-export function FilterBar({ settings, facets, search, onSearch, onChange, onReset }: {
+/**
+ * Search, the four facets, the sort order and the two switches – everything that narrows the list.
+ * The search box is always there; the rest folds away behind the header's menu button, because on a
+ * phone it is taller than the list it filters.
+ */
+export function FilterBar({ settings, facets, search, open, onSearch, onChange, onReset }: {
   settings: ViewSettings;
   facets: { groups: Facet[]; categories: Facet[]; countries: Facet[]; languages: Facet[] };
   /** Kept apart from `settings` so typing stays responsive on a list of this size. */
   search: string;
+  /** Whether the facets, the sort order and the switches are shown. */
+  open: boolean;
   onSearch: (v: string) => void;
   onChange: (patch: Partial<ViewSettings>) => void;
   onReset: () => void;
@@ -40,7 +46,7 @@ export function FilterBar({ settings, facets, search, onSearch, onChange, onRese
     || settings.onlyFavorites || !settings.hideNsfw || !!search || settings.sort !== DEFAULT_SETTINGS.sort;
 
   return (
-    <div className="flex flex-col gap-2 border-b p-2.5">
+    <div className="flex shrink-0 flex-col gap-2 border-b p-2.5" id="filterBar" data-open={open}>
       <div className="relative">
         <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2" />
         <Input
@@ -54,6 +60,7 @@ export function FilterBar({ settings, facets, search, onSearch, onChange, onRese
         )}
       </div>
 
+      {open && (<>
       <div className="grid grid-cols-2 gap-2">
         <FacetSelect id="filterGroup" label={t('filter.group')} value={settings.group} options={facets.groups} onChange={(group) => onChange({ group })} />
         <FacetSelect id="filterCategory" label={t('filter.category')} value={settings.category} options={facets.categories} onChange={(category) => onChange({ category })} />
@@ -79,6 +86,7 @@ export function FilterBar({ settings, facets, search, onSearch, onChange, onRese
         </Label>
         {dirty && <Button id="btnClearFilters" size="xs" variant="ghost" className="ml-auto" onClick={onReset}>{t('filter.clear')}</Button>}
       </div>
+      </>)}
     </div>
   );
 }
