@@ -1,0 +1,157 @@
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { RefreshCw, Tv } from 'lucide-react';
+import { toast } from 'sonner';
+import { Toaster } from '@/components/ui/sonner';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+import { ChannelList } from './ChannelList';
+import { FilterBar } from './FilterBar';
+import { StreamPlayer } from './StreamPlayer';
+import { DEFAULT_SOURCES, facets as buildFacets, loadCatalog, type Catalog, type CatalogSources, type Channel, type LoadProgress } from '../engine/catalog';
+import { prefs, type ViewSettings } from '../engine/prefs';
+import { useI18n } from '../engine/i18n';
+
+export interface IptvViewerProps {
+  /** Where the playlist and the metadata come from; defaults to iptv-org. */
+  sources?: CatalogSources;
+  /** Offered on a finished recording – the host decides what "open in the editor" means. */
+  onRecorded?: (file: File) => void | Promise<void>;
+  className?: string;
+}
+
+const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+
+function sortChannels(list: Channel[], sort: ViewSettings['sort'], recents: string[]): Channel[] {
+  if (sort === 'playlist') return list;
+  const out = list.slice();
+  const byName = (a: Channel, b: Channel) => collator.compare(a.sortName, b.sortName);
+  if (sort === 'name') return out.sort(byName);
+  if (sort === 'name-desc') return out.sort((a, b) => byName(b, a));
+  if (sort === 'group') return out.sort((a, b) => collator.compare(a.group, b.group) || byName(a, b));
+  if (sort === 'country') return out.sort((a, b) => collator.compare(a.countryName || a.country || '￿', b.countryName || b.country || '￿') || byName(a, b));
+  // recently watched first, in the order they were watched, then everything else by name
+  const rank = new Map(recents.map((key, i) => [key, i]));
+  return out.sort((a, b) => (rank.get(a.key) ?? Infinity) - (rank.get(b.key) ?? Infinity) || byName(a, b));
+}
+
+/**
+ * A viewer for the iptv-org playlist: browse and filter several thousand public streams, keep
+ * favourites, watch one, share the screen, and record either.
+ */
+export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }: IptvViewerProps) {
+  const { t } = useI18n();
+  const version = useSyncExternalStore(prefs.subscribe, prefs.getVersion, prefs.getVersion);
+  const settings = prefs.settings();
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [progress, setProgress] = useState<LoadProgress | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Channel | null>(null);
+  const [search, setSearch] = useState(settings.search);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const load = useCallback((refresh: boolean) => {
+    const controller = new AbortController();
+    setError(null);
+    setProgress({ stage: 'playlist' });
+    loadCatalog({ sources, refresh, signal: controller.signal, onProgress: setProgress })
+      .then((c) => { setCatalog(c); setProgress(null); })
+      .catch((e: Error) => { if (e.name !== 'AbortError') { setError(e.message || String(e)); setProgress(null); } });
+    return () => controller.abort();
+  }, [sources]);
+
+  useEffect(() => load(false), [load]);
+
+  // typing filters a list of thousands – let it settle before re-running the pass
+  const onSearch = useCallback((value: string) => {
+    setSearch(value);
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => prefs.update({ search: value }), 150);
+  }, []);
+
+  const all = useMemo(() => catalog?.channels ?? [], [catalog]);
+  const facets = useMemo(() => buildFacets(all), [all]);
+
+  const shown = useMemo(() => {
+    const terms = settings.search.toLowerCase().split(/\s+/).filter(Boolean);
+    const favorites = prefs.favoriteKeys();
+    const list = all.filter((c) => {
+      if (settings.hideNsfw && c.nsfw) return false;
+      if (settings.onlyFavorites && !favorites.has(c.key)) return false;
+      if (settings.group && c.group !== settings.group) return false;
+      if (settings.category && !c.categories.includes(settings.category)) return false;
+      if (settings.country && c.country !== settings.country) return false;
+      if (settings.language && !c.languages.includes(settings.language)) return false;
+      return terms.every((term) => c.search.includes(term));
+    });
+    return sortChannels(list, settings.sort, prefs.recentKeys());
+    // favourites and the recently-watched order live in the preference store, so `version` – which
+    // changes on every write there – is the dependency the linter cannot see
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [all, settings, version]);
+
+  const play = useCallback((c: Channel) => { setSelected(c); prefs.markPlayed(c.key); }, []);
+
+  const sendToEditor = useMemo(() => (onRecorded ? async (file: File) => {
+    await onRecorded(file);
+    toast.success(t('rec.added'));
+  } : undefined), [onRecorded, t]);
+
+  const loading = progress !== null;
+  const pct = progress?.total ? `%${Math.round((progress.loaded! / progress.total) * 100)}` : '';
+
+  return (
+    <div className={cn('veditor-iptv bg-background text-foreground dark flex h-full min-h-0 w-full min-w-0 overflow-hidden max-[900px]:flex-col', className)}>
+      <aside className="bg-card flex w-[360px] min-w-0 shrink-0 flex-col border-r max-[900px]:h-1/2 max-[900px]:w-full max-[900px]:border-r-0 max-[900px]:border-b" id="channelPanel">
+        <div className="flex items-center gap-2 border-b px-3 py-2">
+          <Tv className="size-4 shrink-0 text-red-500" />
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-sm font-semibold">{t('title')}</h1>
+            <p className="text-muted-foreground truncate text-[11px]" id="catalogReport">
+              {catalog
+                ? t('load.report', {
+                  n: catalog.report.entries,
+                  meta: catalog.report.withMetadata,
+                  when: catalog.report.fromCache ? t('load.cached') : new Date(catalog.report.fetchedAt).toLocaleTimeString(),
+                })
+                : t('subtitle')}
+            </p>
+          </div>
+          <Button id="btnRefresh" variant="ghost" size="icon-sm" title={t('load.refresh')} disabled={loading} onClick={() => load(true)}>
+            <RefreshCw className={cn(loading && 'animate-spin')} />
+          </Button>
+        </div>
+
+        <FilterBar
+          settings={settings} facets={facets} search={search} onSearch={onSearch}
+          onChange={(patch) => prefs.update(patch)}
+          onReset={() => { setSearch(''); prefs.reset(); }}
+        />
+
+        {loading && (
+          <p className="text-muted-foreground p-6 text-center text-sm" id="catalogLoading">
+            {progress.stage === 'playlist' ? t('load.playlist', { pct }) : progress.stage === 'metadata' ? t('load.metadata') : t('load.building')}
+          </p>
+        )}
+        {error && (
+          <div className="p-6 text-center text-sm" id="catalogError">
+            <p className="mb-3 text-red-400">{t('load.error', { e: error })}</p>
+            <Button size="sm" variant="secondary" onClick={() => load(true)}>{t('load.retry')}</Button>
+          </div>
+        )}
+        {catalog && Object.values(catalog.report.api).every((v) => v === 'failed') && (
+          <p className="border-b bg-amber-950/40 px-3 py-1.5 text-[11px] text-amber-300" id="catalogNoMeta">{t('load.noMetadata')}</p>
+        )}
+
+        {!loading && !error && (
+          <>
+            <div className="text-muted-foreground border-b px-3 py-1 text-[11px]" id="channelCount">{t('list.count', { n: shown.length })}</div>
+            <ChannelList channels={shown} selectedKey={selected?.key ?? null} onSelect={play} favoriteVersion={version} />
+          </>
+        )}
+      </aside>
+
+      <StreamPlayer channel={selected} onSendToEditor={sendToEditor} />
+      <Toaster position="bottom-center" richColors />
+    </div>
+  );
+}
