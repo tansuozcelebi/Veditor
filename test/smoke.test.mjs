@@ -13,13 +13,16 @@ const fixtures = join(root, 'test/fixtures');
 const outDir = join(root, 'test/output'); mkdirSync(outDir, { recursive: true });
 if (!existsSync(join(fixtures, 'clipA.webm'))) { console.log('generating fixtures…'); const r = spawnSync(process.execPath, [join(root, 'test/gen-fixtures.mjs')], { stdio: 'inherit' }); if (r.status !== 0) process.exit(1); }
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webm': 'video/webm', '.wav': 'audio/wav', '.json': 'application/json' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webm': 'video/webm', '.wav': 'audio/wav', '.json': 'application/json', '.m3u': 'application/x-mpegurl' };
 // Serves the production build (dist/) with an SPA fallback, so the React router route /video-editor resolves.
 const dist = join(root, 'dist');
 if (!existsSync(join(dist, 'index.html'))) { console.error('dist/index.html not found – run `npm run build` first'); process.exit(1); }
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
-  let f = join(dist, p);
+  // a stand-in for iptv-org: the playlist and its metadata, plus the fixture clips they point at
+  let f = p.startsWith('/iptv/') ? join(fixtures, p.slice(1))
+    : p.startsWith('/media/') ? join(fixtures, p.slice('/media/'.length))
+    : join(dist, p);
   try { if (p === '/' || !statSync(f).isFile()) throw new Error(); }
   catch { f = join(dist, 'index.html'); }
   res.writeHead(200, { 'Content-Type': MIME[extname(f)] || 'application/octet-stream' });
@@ -344,27 +347,22 @@ try {
   await page.keyboard.press('Escape');
   check('the layout menu hides a panel and brings it back', hidden === false && restored === true, JSON.stringify({ hidden, restored }));
 
-  // a real mouse drag of a tab, the way a user rearranges the workspace
+  // A real drag of a tab, the way a user rearranges the workspace. Playwright's drag support is
+  // what drives it: hand-rolled mouse moves depend on the compositor starting a native drag within
+  // a guessed delay, which a loaded CI machine does not do. What is asserted is the outcome a user
+  // would see – the two panels end up in one group – rather than the indicator drawn on the way.
   const sourceTitle = await page.evaluate(() => window.veditor.dock.api.getPanel('source').title);
   const groupsBefore = await page.evaluate(() => window.veditor.dock.api.groups.length);
-  const tabBox = await page.locator('.dv-tab').filter({ hasText: sourceTitle }).first().boundingBox();
-  const previewBox = await page.locator('#previewPanel').boundingBox();
-  await page.mouse.move(tabBox.x + tabBox.width / 2, tabBox.y + tabBox.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(previewBox.x + previewBox.width / 2, previewBox.y + previewBox.height / 2, { steps: 20 });
-  await page.mouse.move(previewBox.x + previewBox.width / 2 + 4, previewBox.y + previewBox.height / 2, { steps: 4 });
-  await page.waitForTimeout(300);
-  const dropTarget = await page.evaluate(() => !!document.querySelector('.dv-drop-target-anchor, .dv-drop-target'));
-  await page.mouse.up();
-  await page.waitForTimeout(800);
+  await page.locator('.dv-tab').filter({ hasText: sourceTitle }).first().dragTo(page.locator('#previewPanel'));
+  await page.waitForFunction((n) => window.veditor.dock.api.groups.length === n, groupsBefore - 1, { timeout: 15000 }).catch(() => {});
   const dragged = await page.evaluate(() => ({
     groups: window.veditor.dock.api.groups.length,
     group: window.veditor.dock.api.getPanel('source').group.panels.map((x) => x.id),
     saved: (localStorage.getItem('veditor.layout.v1') || '').includes('"source"'),
   }));
-  check('a panel tab can be dragged onto another panel with the mouse, and the arrangement is stored',
-    dropTarget && dragged.groups === groupsBefore - 1 && dragged.group.includes('source') && dragged.group.includes('preview') && dragged.saved,
-    JSON.stringify({ dropTarget, groupsBefore, ...dragged }));
+  check('a panel tab can be dragged onto another panel, and the arrangement is stored',
+    dragged.groups === groupsBefore - 1 && dragged.group.includes('source') && dragged.group.includes('preview') && dragged.saved,
+    JSON.stringify({ groupsBefore, ...dragged }));
 
   await page.evaluate(() => window.veditor.dock.reset());
   await page.waitForTimeout(600);
@@ -638,6 +636,147 @@ try {
       await b4.close();
       php.kill('SIGTERM');
     }
+  }
+}
+// ---- live TV: the iptv-org playlist, its filters, and recording what is on screen ----
+// Driven against a stub playlist served from test/fixtures/iptv, so the checks are deterministic
+// and no public stream is contacted.
+{
+  const b5 = await chromium.launch({ channel: 'chromium', args: ['--autoplay-policy=no-user-gesture-required'] });
+  const p5 = await b5.newPage({ viewport: { width: 1500, height: 900 }, locale: 'tr-TR' });
+  const errs5 = [];
+  p5.on('pageerror', (e) => errs5.push(e.message));
+  const tvUrl = `${base}/player?playlist=/iptv/index.m3u&api=/iptv/api`;
+  const names = () => p5.evaluate(() => [...document.querySelectorAll('.channel-row')].map((r) => r.querySelector('span').textContent));
+  try {
+    await p5.goto(tvUrl);
+    await p5.waitForSelector('#channelList .channel-row', { timeout: 60000 });
+
+    const loaded = await p5.evaluate(() => ({
+      count: document.getElementById('channelCount').textContent,
+      report: document.getElementById('catalogReport').textContent,
+      rows: [...document.querySelectorAll('.channel-row')].map((r) => r.textContent.replace(/\s+/g, ' ').trim()),
+      groups: [...document.querySelectorAll('#filterGroup option')].map((o) => o.textContent),
+      languages: [...document.querySelectorAll('#filterLanguage option')].map((o) => o.textContent),
+      countries: [...document.querySelectorAll('#filterCountry option')].map((o) => o.textContent),
+    }));
+    // 7 #EXTINF lines, one of them without a URL: 6 streams, 5 shown once adult content is hidden
+    check('the playlist is parsed and its awkward entries survive',
+      /6 yayın/.test(loaded.report) && loaded.count.startsWith('5')
+        && loaded.groups.some((g) => g.startsWith('Haber, Politika'))   // a comma inside group-title
+        && loaded.groups.some((g) => g.startsWith('News')),             // #EXTGRP, not group-title
+      JSON.stringify({ count: loaded.count, report: loaded.report, groups: loaded.groups }));
+    check('channel details are joined from the API (country, language, category)',
+      loaded.rows[0].includes('Türkiye') && loaded.rows[0].includes('Turkish') && loaded.rows[0].includes('🇹🇷')
+        && loaded.languages.some((l) => l.startsWith('Kurdish'))        // only on the main feed of that channel
+        && loaded.countries.some((c) => c.includes('Germany')),
+      JSON.stringify({ first: loaded.rows[0], languages: loaded.languages }));
+
+    await p5.selectOption('#filterLanguage', 'deu');
+    await p5.waitForTimeout(250);
+    const german = await names();
+    await p5.selectOption('#filterLanguage', '');
+    check('the language filter narrows the list', german.length === 1 && german[0] === 'Sport Eins', JSON.stringify(german));
+
+    await p5.click('#hideNsfw');
+    await p5.waitForTimeout(250);
+    const withAdult = await names();
+    await p5.click('#hideNsfw');
+    await p5.waitForTimeout(250);
+    const withoutAdult = await names();
+    check('adult channels are hidden by default and can be shown',
+      withAdult.includes('Adult One') && !withoutAdult.includes('Adult One'), JSON.stringify({ withAdult: withAdult.length, withoutAdult: withoutAdult.length }));
+
+    await p5.selectOption('#sortSelect', 'name-desc');
+    await p5.waitForTimeout(250);
+    const desc = await names();
+    await p5.selectOption('#sortSelect', 'name');
+    await p5.waitForTimeout(250);
+    const asc = await names();
+    check('sorting reverses the list', desc[0] === asc[asc.length - 1] && desc[desc.length - 1] === asc[0], JSON.stringify({ asc, desc }));
+
+    await p5.fill('#channelSearch', 'müzik');
+    await p5.waitForTimeout(400);
+    const searched = await names();
+    await p5.fill('#channelSearch', '');
+    await p5.waitForTimeout(400);
+    check('search matches the name and the metadata', searched.length === 1 && searched[0] === 'Müzik 1', JSON.stringify(searched));
+
+    // favourites survive a reload, because they are the user's, not the catalogue's
+    await p5.click('.channel-row[data-index="2"] .channel-fav');
+    await p5.click('#favOnly');
+    await p5.waitForTimeout(250);
+    const favBefore = await names();
+    await p5.reload();
+    await p5.waitForSelector('#channelList .channel-row', { timeout: 60000 });
+    const favAfter = await names();
+    const starred = await p5.evaluate(() => document.querySelector('.channel-row .channel-fav')?.getAttribute('aria-pressed'));
+    await p5.click('#favOnly');
+    await p5.waitForTimeout(250);
+    check('a favourite is kept and still filters after a reload',
+      favBefore.length === 1 && favAfter.join() === favBefore.join() && starred === 'true', JSON.stringify({ favBefore, favAfter, starred }));
+
+    // ---- playback ----
+    await p5.click('.channel-row[data-index="0"]');
+    await p5.waitForFunction(() => document.getElementById('playerStatus')?.dataset.status === 'playing', null, { timeout: 30000 });
+    await p5.waitForTimeout(1200);
+    const playing = await p5.evaluate(() => { const v = document.getElementById('playerVideo'); return { t: v.currentTime, w: v.videoWidth, title: document.getElementById('playerTitle').textContent }; });
+    check('a channel plays', playing.t > 0.3 && playing.w === 640 && playing.title === 'Haber 1', JSON.stringify(playing));
+
+    // ---- recording, then straight into the editor ----
+    await p5.click('#btnRecord');
+    await p5.waitForSelector('#recBadge', { timeout: 10000 });
+    await p5.waitForTimeout(2500);
+    await p5.click('#btnRecord');
+    await p5.waitForSelector('#recResult', { timeout: 30000 });
+    const recorded = (await p5.textContent('#recResult')).replace(/\s+/g, ' ').trim();
+    await p5.click('#btnRecToEditor');
+    await p5.waitForFunction(() => window.veditor && window.veditor.store, null, { timeout: 30000 });
+    await p5.waitForFunction(() => [...(window.veditor?.store.media.values() ?? [])].some((m) => !m.analyzing), null, { timeout: 60000 }).catch(() => null);
+    const inEditor = await p5.evaluate(() => [...window.veditor.store.media.values()].map((m) => ({ name: m.name, kind: m.kind, duration: +m.duration.toFixed(1), w: m.width })));
+    check('a recording of the stream lands in the editor as a usable clip',
+      /Haber 1\.webm/.test(recorded) && p5.url().includes('/video-editor')
+        && inEditor.length === 1 && inEditor[0].kind === 'video' && inEditor[0].duration >= 1.5 && inEditor[0].w === 640,
+      JSON.stringify({ recorded: recorded.slice(0, 60), inEditor }));
+
+    // ---- a stream the browser cannot reach explains itself ----
+    await p5.goto(tvUrl);
+    await p5.waitForSelector('#channelList .channel-row', { timeout: 60000 });
+    await p5.click('.channel-row[data-index="3"]');          // an .m3u8 on a host that does not exist
+    await p5.waitForSelector('#playerError', { timeout: 60000 });
+    const failure = (await p5.textContent('#playerError')).replace(/\s+/g, ' ').trim();
+    check('an unreachable stream is explained instead of failing silently',
+      /açılamadı/.test(failure) && /(CORS|ulaşılamadı)/.test(failure) && failure.includes('Yeniden dene'), failure.slice(0, 120));
+
+    // ---- screen sharing: the picker is the browser's, so the capture itself is stubbed ----
+    await p5.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 320; canvas.height = 180;
+      const ctx = canvas.getContext('2d');
+      setInterval(() => { ctx.fillStyle = '#0a0'; ctx.fillRect(0, 0, 320, 180); ctx.fillStyle = '#fff'; ctx.fillText(String(Date.now()), 10, 90); }, 100);
+      navigator.mediaDevices.getDisplayMedia = async () => canvas.captureStream(25);
+    });
+    await p5.click('#btnShare');
+    await p5.waitForFunction(() => document.getElementById('playerStatus')?.dataset.sharing === 'true', null, { timeout: 15000 });
+    await p5.waitForTimeout(800);
+    const shared = await p5.evaluate(() => { const v = document.getElementById('playerVideo'); return { srcObject: !!v.srcObject, w: v.videoWidth, badge: document.getElementById('playerTitle').textContent }; });
+    await p5.click('#btnRecord');
+    await p5.waitForSelector('#recBadge', { timeout: 10000 });
+    await p5.waitForTimeout(2000);
+    await p5.click('#btnRecord');
+    await p5.waitForSelector('#recResult', { timeout: 30000 });
+    const sharedRec = (await p5.textContent('#recResult')).replace(/\s+/g, ' ').trim();
+    await p5.click('#btnShare');                              // stop sharing
+    await p5.waitForFunction(() => document.getElementById('playerStatus')?.dataset.sharing === 'false', null, { timeout: 10000 });
+    check('the shared screen is shown and can be recorded',
+      shared.srcObject && shared.w === 320 && /Ekran paylaşılıyor/.test(shared.badge) && /ekran\.webm/.test(sharedRec),
+      JSON.stringify({ shared, sharedRec: sharedRec.slice(0, 50) }));
+    check('no page errors (live TV run)', errs5.length === 0, errs5.join(' ; ').slice(0, 300));
+  } catch (e) {
+    failures++; console.error('❌ live TV run crashed:', e);
+  } finally {
+    await p5.screenshot({ path: join(outDir, 'live-tv.png') }).catch(() => {});
+    await b5.close();
   }
 }
 // ---- a restrictive Content-Security-Policy must be reported, not mistaken for broken files ----

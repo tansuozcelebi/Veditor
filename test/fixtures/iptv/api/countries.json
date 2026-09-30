@@ -1,0 +1,5 @@
+[
+  { "code": "TR", "name": "Türkiye", "flag": "🇹🇷", "languages": ["tur"] },
+  { "code": "DE", "name": "Germany", "flag": "🇩🇪", "languages": ["deu"] },
+  { "code": "US", "name": "United States", "flag": "🇺🇸", "languages": ["eng"] }
+]

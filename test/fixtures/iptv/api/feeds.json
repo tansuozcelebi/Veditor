@@ -1,0 +1,6 @@
+[
+  { "channel": "Haber1.tr", "id": "SD", "is_main": false, "languages": ["tur"] },
+  { "channel": "Haber1.tr", "id": "HD", "is_main": true, "languages": ["tur", "kur"] },
+  { "channel": "Spor1.de", "id": "HD", "is_main": true, "languages": ["deu"] },
+  { "channel": "News24.us", "id": "HD", "is_main": true, "languages": ["eng"] }
+]

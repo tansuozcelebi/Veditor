@@ -1,0 +1,7 @@
+[
+  { "id": "Haber1.tr", "name": "Haber 1", "country": "TR", "categories": ["news"], "is_nsfw": false, "logo": "/logo-haber.png" },
+  { "id": "Muzik1.tr", "name": "Müzik 1", "country": "TR", "categories": ["music"], "is_nsfw": false },
+  { "id": "Spor1.de", "name": "Sport Eins", "country": "DE", "categories": ["sports"], "is_nsfw": false },
+  { "id": "News24.us", "name": "News 24", "country": "US", "categories": ["news"], "is_nsfw": false },
+  { "id": "Adult1.us", "name": "Adult One", "country": "US", "categories": ["xxx"], "is_nsfw": true }
+]

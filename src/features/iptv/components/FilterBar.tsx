@@ -1,0 +1,84 @@
+import { Search, Star, X } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { useI18n } from '../engine/i18n';
+import { DEFAULT_SETTINGS, type SortKey, type ViewSettings } from '../engine/prefs';
+import type { Facet } from '../engine/catalog';
+
+const SORTS: SortKey[] = ['name', 'name-desc', 'group', 'country', 'recent', 'playlist'];
+
+function FacetSelect({ id, label, value, options, onChange }: {
+  id: string; label: string; value: string; options: Facet[]; onChange: (v: string) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <label className="flex min-w-0 flex-col gap-1">
+      <span className="text-muted-foreground text-[11px] uppercase">{label}</span>
+      <NativeSelect id={id} size="sm" value={value} onChange={(e) => onChange(e.target.value)}>
+        <NativeSelectOption value="">{t('filter.all')}</NativeSelectOption>
+        {options.map((o) => <NativeSelectOption key={o.value} value={o.value}>{o.label} ({o.count})</NativeSelectOption>)}
+      </NativeSelect>
+    </label>
+  );
+}
+
+/** Search, the four facets, the sort order and the two switches – everything that narrows the list. */
+export function FilterBar({ settings, facets, search, onSearch, onChange, onReset }: {
+  settings: ViewSettings;
+  facets: { groups: Facet[]; categories: Facet[]; countries: Facet[]; languages: Facet[] };
+  /** Kept apart from `settings` so typing stays responsive on a list of this size. */
+  search: string;
+  onSearch: (v: string) => void;
+  onChange: (patch: Partial<ViewSettings>) => void;
+  onReset: () => void;
+}) {
+  const { t } = useI18n();
+  const dirty = (['group', 'category', 'country', 'language'] as const).some((k) => settings[k])
+    || settings.onlyFavorites || !settings.hideNsfw || !!search || settings.sort !== DEFAULT_SETTINGS.sort;
+
+  return (
+    <div className="flex flex-col gap-2 border-b p-2.5">
+      <div className="relative">
+        <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2" />
+        <Input
+          id="channelSearch" className="h-8 pr-8 pl-8" placeholder={t('search')} value={search} spellCheck={false}
+          onChange={(e) => onSearch(e.target.value)}
+        />
+        {search && (
+          <button type="button" className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2" onClick={() => onSearch('')} aria-label={t('filter.clear')}>
+            <X className="size-4" />
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <FacetSelect id="filterGroup" label={t('filter.group')} value={settings.group} options={facets.groups} onChange={(group) => onChange({ group })} />
+        <FacetSelect id="filterCategory" label={t('filter.category')} value={settings.category} options={facets.categories} onChange={(category) => onChange({ category })} />
+        <FacetSelect id="filterCountry" label={t('filter.country')} value={settings.country} options={facets.countries} onChange={(country) => onChange({ country })} />
+        <FacetSelect id="filterLanguage" label={t('filter.language')} value={settings.language} options={facets.languages} onChange={(language) => onChange({ language })} />
+      </div>
+
+      <label className="flex min-w-0 flex-col gap-1">
+        <span className="text-muted-foreground text-[11px] uppercase">{t('sort.label')}</span>
+        <NativeSelect id="sortSelect" size="sm" value={settings.sort} onChange={(e) => onChange({ sort: e.target.value as SortKey })}>
+          {SORTS.map((s) => <NativeSelectOption key={s} value={s}>{t('sort.' + s)}</NativeSelectOption>)}
+        </NativeSelect>
+      </label>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <Label className="gap-1.5 text-xs">
+          <Switch id="favOnly" checked={settings.onlyFavorites} onCheckedChange={(onlyFavorites) => onChange({ onlyFavorites })} />
+          <Star className="size-3.5" /> {t('filter.favorites')}
+        </Label>
+        <Label className="gap-1.5 text-xs">
+          <Switch id="hideNsfw" checked={settings.hideNsfw} onCheckedChange={(hideNsfw) => onChange({ hideNsfw })} />
+          {t('filter.nsfw')}
+        </Label>
+        {dirty && <Button id="btnClearFilters" size="xs" variant="ghost" className="ml-auto" onClick={onReset}>{t('filter.clear')}</Button>}
+      </div>
+    </div>
+  );
+}

@@ -6,6 +6,10 @@ Veditor, tamamen tarayıcıda çalışan çok kanallı bir video editörüdür. 
 oynatır, kliplerinizi keser/böler/taşır, ses ekleyip mikserler, seslendirme kaydeder, geçiş efektleri ve yazı
 katmanları ekler ve sonucu tek bir video dosyası olarak dışa aktarır. Medya hiçbir zaman makinenizden çıkmaz.
 
+Aynı uygulamada ayrıca bir **Canlı TV** sayfası vardır: [iptv-org](https://github.com/iptv-org/iptv)
+listesindeki açık yayınları filtreleyip izler, ekran paylaşımı yapar ve izlediğinizi kaydedip tek tıkla
+editöre aktarır ([Canlı TV](#canlı-tv-oynatıcı-sayfası)).
+
 Uygulama **React 19 + TypeScript + Vite + Tailwind CSS v4 + shadcn/ui (new-york)** ile yazılmıştır ve
 `src/features/video-editor` altında **kendi kendine yeten bir özellik modülü** olarak paketlenmiştir. Bu sayede
 başka bir shadcn tabanlı uygulamaya (örneğin **KREAWMS-FRONTEND-SHADCN**) bir menü sayfası / rota olarak
@@ -33,6 +37,7 @@ kopyalanıp takılabilir. Ayrıntılar için [Başka bir uygulamaya entegrasyon]
 | **Dışa aktarma** | WebM (VP9/VP8 + Opus) ya da tarayıcı destekliyorsa MP4 (H.264 + AAC); yalnızca ses (Opus / AAC). Çözünürlük (1080p, 720p, 4K, dikey, kare, özel), kare hızı, bit hızı, ilerleme çubuğu, önizleme ve indirme. WebM çıktısına süre bilgisi otomatik eklenir. |
 | **Dockable paneller** | Medya, Önizleme, Özellikler, Kaynak Oynatıcı ve Zaman Çizelgesi birer panel: sekmesinden tutup başka bir kenara sürüklenebilir, üst üste sekme hâline getirilebilir, kenarlarından boyutlandırılabilir, kapatılıp **Yerleşim** menüsünden geri açılabilir. Düzen tarayıcıda saklanır, menü geçişlerinde ve yeniden açılışta korunur; tek tıkla varsayılana dönülür. |
 | **Kaynak oynatıcı** | Ayarların altındaki ikinci oynatıcı: seçilen, içe aktarılan ya da üzerine sürükleyip bıraktığınız klibi tek başına, kendi kontrolleriyle oynatır ve **Ekle** ile oynatma kafasına yerleştirir. Zaman çizelgesi oynarken sesler çakışmaz; hangisi başlarsa diğeri durur. |
+| **Canlı TV (Oynatıcı)** | `iptv-org` listesinden binlerce açık yayın: arama, grup / kategori / ülke / **dil** filtresi, sıralama, favoriler (tarayıcıda kalıcı), son izlenenler, yetişkin içeriği gizleme. HLS yayınları hls.js ile oynatılır; **ekran paylaşımı** ve **yayın/ekran kaydı** vardır, kayıt tek tıkla editöre aktarılır. |
 | **Proje** | Proje ayarları (çözünürlük, FPS, arka plan), proje dosyasını JSON olarak kaydetme / açma (medya dosyaları yeniden eşleştirilir), TR / EN arayüz. |
 
 ## Çalıştırma
@@ -59,6 +64,36 @@ MediaRecorder desteği kısıtlıdır. Node 20+ gerekir.
 5. **Ses Kaydet** ile mikrofondan seslendirme kaydedin; kayıt oynatma kafasından başlar ve durdurunca ses kanalına eklenir.
 6. **Dışa Aktar** ile biçim, çözünürlük, FPS ve kaliteyi seçip başlatın. Dışa aktarma gerçek zamanlı çalışır
    (5 dakikalık proje ≈ 5 dakika); sekmeyi ön planda tutun.
+
+### Canlı TV (Oynatıcı sayfası)
+
+Sol menüdeki **Canlı TV** (`/player`) sayfası [iptv-org](https://github.com/iptv-org/iptv) topluluk
+listesini açar: `index.m3u` yayınları, iptv-org API'si de kanal bilgilerini (ülke, kategori, dil,
+yetişkin işareti, logo) verir. İkisi `tvg-id` üzerinden eşleştirilir.
+
+- **Arama** ad, ülke, kategori ve dil üzerinde birlikte çalışır (birden çok kelime yazılabilir).
+- **Filtreler:** Grup (listenin kendi `group-title` değeri), Kategori, Ülke ve **Dil**. Her seçenek
+  yanında kaç kanal olduğunu gösterir. **Yetişkin içeriği gizle** varsayılan olarak açıktır.
+- **Sıralama:** ad A→Z / Z→A, gruba göre, ülkeye göre, **son izlenenler**, liste sırası.
+- **Favoriler:** satırdaki yıldız; "Yalnızca favoriler" ile süzülür. Favoriler ve son izlenenler
+  tarayıcıda (`localStorage`) kalır, liste yenilense de kaybolmaz.
+- **Oynatma:** HLS (`.m3u8`) yayınları [hls.js](https://github.com/video-dev/hls.js) ile, diğerleri
+  doğrudan oynatılır. Ses, tam ekran, küçük pencere (PiP), adresi kopyalama ve yeni sekmede açma.
+- **Ekran paylaşımı:** "Ekran Paylaş" ile ekranınız/pencereniz oynatıcıya alınır (tarayıcının kendi
+  seçicisi çıkar). Paylaşımı tarayıcıdan durdurduğunuzda kanal geri gelir.
+- **Kayıt:** "Kaydet" o an ekranda olanı (kanal ya da paylaşılan ekran) WebM olarak kaydeder;
+  süre bilgisi dosyaya yazılır, böylece kayıt sarılabilir ve **Editörde aç** ile tek tıkla video
+  editörüne medya olarak eklenir.
+- **Kendi listeniz:** `/player?playlist=<m3u adresi>&api=<iptv-org api adresi>` ile başka bir liste
+  yüklenebilir (`api` boş bırakılırsa yalnızca listenin kendi grupları kullanılır).
+
+Liste birkaç MB'tır; ilk yüklemeden sonra IndexedDB'de 12 saat saklanır, sağ üstteki yenile
+düğmesiyle tazelenir.
+
+> **Not:** Yayınlar üçüncü tarafların sunucularındadır. Tarayıcıdan oynatılabilmeleri için sunucunun
+> CORS izni vermesi gerekir; vermeyen kanallarda "tarayıcıdan erişime izin vermiyor (CORS)" uyarısı
+> çıkar ve adres harici bir oynatıcıda (VLC vb.) açılabilir. Yayın içeriğinden ve kullanım
+> haklarından iptv-org listesi değil, yayıncılar sorumludur.
 
 ### Panel yerleşimi
 
@@ -103,6 +138,18 @@ src/lib/utils.ts                   shadcn `cn()` yardımcısı
 src/components/ui/                 shadcn/ui bileşenleri (new-york): button, input, textarea, label, separator, badge,
                                    switch, slider, select, native-select, dialog, dropdown-menu, context-menu, tooltip,
                                    scroll-area, sonner
+src/features/iptv/                 ▶ CANLI TV MODÜLÜ (/player rotası)
+  index.ts                         Genel API: <IptvViewer />, loadCatalog, parseM3u, prefs
+  components/IptvViewer.tsx        Sayfa: katalog yükleme, filtre/sıralama, liste + oynatıcı
+  components/FilterBar.tsx         Arama, grup/kategori/ülke/dil, sıralama, favori ve yetişkin anahtarları
+  components/ChannelList.tsx       Pencereli (virtualized) kanal listesi – on binlerce satır için
+  components/StreamPlayer.tsx      hls.js + yerel oynatma, ekran paylaşımı, kayıt
+  engine/m3u.ts                    Genişletilmiş M3U ayrıştırıcı (EXTINF/EXTVLCOPT/EXTGRP)
+  engine/catalog.ts                Liste + iptv-org API birleştirme, önbellek, filtre değerleri
+  engine/prefs.ts                  Favoriler, son izlenenler, görünüm ayarları (localStorage)
+  engine/recorder.ts               MediaRecorder sarmalayıcı (+ WebM süre yaması)
+  engine/idb.ts                    Küçük IndexedDB anahtar/değer deposu (katalog önbelleği)
+  engine/i18n.ts                   TR / EN çeviriler (dil anahtarı editörle ortak)
 src/features/video-editor/         ▶ ÖZELLİK MODÜLÜ (host uygulamaya kopyalanacak klasör)
   index.ts                         Genel API: <VideoEditor />, Store, Player, Exporter, i18n, tipler
   editor.css                       Zaman çizelgesi / klip / medya kartı stilleri (.veditor altında, shadcn değişkenlerini kullanır)
@@ -135,6 +182,7 @@ src/features/video-editor/         ▶ ÖZELLİK MODÜLÜ (host uygulamaya kopya
 public/api/convert.php             Sunucu tarafı dönüştürme uç noktası (PHP + ffmpeg, işler halinde)
 public/api/config.example.php      Sunucu dönüştürme ayarları örneği (yol, sınırlar, token)
 test/                              Playwright uçtan uca duman testi (üretim derlemesine karşı) ve fikstür üretici
+test/fixtures/iptv/                Canlı TV testleri için sahte iptv-org listesi ve API dosyaları
 test/php-router.php                Testte dist/ klasörünü PHP ile sunar (SPA yedeği + gerçek API)
 ```
 
@@ -162,7 +210,8 @@ değişkenleri, `@/` takma adı), lucide-react ikonları, react-router. Adımlar
    Modül yalnızca `@/components/ui/*` ve `@/lib/utils` yollarına bağımlıdır.
 3. **Bağımlılıklar:** `react-router-dom` hariç `package.json` içindeki `dependencies` (radix-ui, lucide-react,
    sonner, clsx, tailwind-merge, class-variance-authority, panel yerleşimi için **dockview-react**, kodek
-   dönüştürme için **@ffmpeg/ffmpeg**, **@ffmpeg/util**, **@ffmpeg/core**) host'ta bulunmalıdır. Host shadcn'in eski
+   dönüştürme için **@ffmpeg/ffmpeg**, **@ffmpeg/util**, **@ffmpeg/core**, Canlı TV için **hls.js**)
+   host'ta bulunmalıdır. Yalnızca editörü alıyorsanız `hls.js` gerekmez. Host shadcn'in eski
    `@radix-ui/react-*` paketlerini kullanıyorsa `src/components/ui` içindeki `from 'radix-ui'` içe aktarmaları
    host'un kendi bileşenleriyle değiştirilebilir; editör bileşenleri Radix'e doğrudan bağımlı değildir.
 4. **Rota ve menü:**
@@ -220,7 +269,12 @@ Test, üretim derlemesini yerel bir sunucudan (SPA yedeği ile) başsız Chromiu
 (iki VP8 video, WAV ton, PNG) üretir, içe aktarma → yerleştirme → bölme/geri alma → fare ile sürükleme/kırpma →
 oynatma/kompozit/ızgara → sesi ayırma → sahte mikrofonla seslendirme kaydı → geçişler → yazı katmanı → sağ tık
 menüsü → proje kaydet/aç → dışa aktarma akışını doğrular ve çıktıyı Playwright ile gelen ffmpeg ile kontrol eder.
-Panel yerleşimi de gerçek fare ile sınanır: bir panel sekmesi sürüklenip başka bir panelin üzerine bırakılır,
+Canlı TV sayfası, `test/fixtures/iptv/` altındaki sahte bir iptv-org listesine karşı sınanır (hiçbir
+genel yayına bağlanılmaz): listenin ayrıştırılması (grup adındaki virgül, `#EXTGRP`, `#EXTVLCOPT`,
+URL'siz satır), API birleştirmesi (ülke/dil/kategori), dil filtresi, yetişkin süzgeci, sıralama,
+arama, favorinin yeniden yüklemeden sonra kalması, kanalın oynaması, kaydın **editöre klip olarak**
+düşmesi, erişilemeyen yayının kendini açıklaması ve ekran paylaşımının (tarayıcı seçicisi taklit
+edilerek) hem görüntülenip hem kaydedilmesi. Panel yerleşimi de gerçek fare ile sınanır: bir panel sekmesi sürüklenip başka bir panelin üzerine bırakılır,
 **Yerleşim** menüsünden panel gizlenip geri açılır, düzenin saklandığı ve varsayılana dönüldüğü doğrulanır;
 kaynak oynatıcının seçilen klibi oynattığı, üzerine bırakılan dosyayı içe aktardığı ve zaman çizelgesi ile
 aynı anda ses vermediği kontrol edilir. Ayrıca ayrı tarayıcı oturumlarında gerçek tıklama ile oynatma, dar bir
@@ -350,9 +404,14 @@ WebAssembly ile derler. Barındırma panellerinin sıkça eklediği `default-src
 giden `.htaccess` çalışan bir politika yazar (Apache'de `Header set`, üst düzeyde tanımlı başlığı değiştirir):
 
 ```
-media-src 'self' blob: data:      img-src 'self' data: blob:
-worker-src 'self' blob:           script-src ... 'wasm-unsafe-eval' blob:
+media-src 'self' blob: data: https:   img-src 'self' data: blob: https:
+worker-src 'self' blob:               script-src ... 'wasm-unsafe-eval' blob:
+connect-src 'self' blob: data: https:
 ```
+
+`https:` izinleri Canlı TV sayfası içindir: yayınlar ve kanal logoları rastgele üçüncü taraf
+sunuculardan gelir, adresleri önceden bilinemez. Canlı TV'yi kullanmayacaksanız bu üç yönergeyi
+`'self' blob: data:` ile sınırlayabilirsiniz.
 
 Politika yine de engelliyorsa başlık Apache'den **sonra** ekleniyordur (CDN/proxy ya da barındırma paneli); o
 zaman oradan düzeltilmelidir. Uygulama bu durumu tanır ve "sitenin güvenlik politikası engelliyor" uyarısını
