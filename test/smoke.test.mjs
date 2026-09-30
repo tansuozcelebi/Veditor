@@ -352,14 +352,21 @@ try {
   const groupsBefore = await page.evaluate(() => window.veditor.dock.api.groups.length);
   const tabBox = await page.locator('.dv-tab').filter({ hasText: sourceTitle }).first().boundingBox();
   const previewBox = await page.locator('#previewPanel').boundingBox();
+  const centreX = previewBox.x + previewBox.width / 2;
+  const centreY = previewBox.y + previewBox.height / 2;
   await page.mouse.move(tabBox.x + tabBox.width / 2, tabBox.y + tabBox.height / 2);
   await page.mouse.down();
-  await page.mouse.move(previewBox.x + previewBox.width / 2, previewBox.y + previewBox.height / 2, { steps: 20 });
-  await page.mouse.move(previewBox.x + previewBox.width / 2 + 4, previewBox.y + previewBox.height / 2, { steps: 4 });
-  await page.waitForTimeout(300);
+  // A native drag only begins once the pointer has moved past the browser's threshold, and the
+  // dragstart that follows is asynchronous: on a loaded machine a fixed pause is not enough, so
+  // every step here waits for the state it needs rather than for a number of milliseconds.
+  await page.mouse.move(tabBox.x + tabBox.width / 2 + 12, tabBox.y + tabBox.height / 2 + 6, { steps: 4 });
+  await page.waitForFunction(() => !!document.querySelector('.dv-tab--dragging, .dv-tab-ghost-drag'), null, { timeout: 5000 }).catch(() => {});
+  await page.mouse.move(centreX, centreY, { steps: 20 });
+  await page.mouse.move(centreX + 4, centreY, { steps: 4 });
+  await page.waitForFunction(() => !!document.querySelector('.dv-drop-target-anchor, .dv-drop-target'), null, { timeout: 5000 }).catch(() => {});
   const dropTarget = await page.evaluate(() => !!document.querySelector('.dv-drop-target-anchor, .dv-drop-target'));
   await page.mouse.up();
-  await page.waitForTimeout(800);
+  await page.waitForFunction((n) => window.veditor.dock.api.groups.length === n, groupsBefore - 1, { timeout: 10000 }).catch(() => {});
   const dragged = await page.evaluate(() => ({
     groups: window.veditor.dock.api.groups.length,
     group: window.veditor.dock.api.getPanel('source').group.panels.map((x) => x.id),
