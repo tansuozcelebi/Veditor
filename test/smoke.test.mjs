@@ -5,7 +5,7 @@ import net from 'node:net';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { chromium } from 'playwright';
+import { chromium, devices } from 'playwright';
 import { findFfmpeg } from './gen-fixtures.mjs';
 
 const root = new URL('../', import.meta.url).pathname;
@@ -784,6 +784,43 @@ try {
     check('the shared screen is shown and can be recorded',
       shared.srcObject && shared.w === 320 && /Ekran paylaşılıyor/.test(shared.badge) && /ekran\.webm/.test(sharedRec),
       JSON.stringify({ shared, sharedRec: sharedRec.slice(0, 50) }));
+    // ---- a phone: the list is what matters, so the filters fold away behind the menu button ----
+    const phone = await b5.newPage({ ...devices['Pixel 7'], locale: 'tr-TR' });
+    try {
+      await phone.goto(tvUrl);
+      await phone.waitForSelector('#channelList .channel-row', { timeout: 60000 });
+      const box = (id) => phone.evaluate((i) => { const r = document.getElementById(i).getBoundingClientRect(); return { y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; }, id);
+      const small = {
+        viewport: phone.viewportSize(),
+        list: await box('channelScroller'),
+        panel: await box('channelPanel'),
+        player: await box('playerPanel'),
+        rows: await phone.evaluate(() => document.querySelectorAll('.channel-row').length),
+        selects: await phone.evaluate(() => document.querySelectorAll('#filterBar select').length),
+        searchVisible: await phone.isVisible('#channelSearch'),
+        overflowX: await phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+      };
+      check('on a phone the channel list gets the room, with the filters folded away',
+        small.selects === 0 && small.searchVisible && small.list.h > 300 && small.rows >= 5
+          && small.player.y === 0 && small.panel.y >= small.player.h && small.overflowX === 0,
+        JSON.stringify(small));
+
+      await phone.click('#btnFilters');
+      await phone.waitForSelector('#filterBar[data-open="true"] select', { timeout: 10000 });
+      await phone.selectOption('#filterLanguage', 'deu');
+      await phone.waitForTimeout(300);
+      const filtered = await phone.evaluate(() => [...document.querySelectorAll('.channel-row')].map((r) => r.querySelector('span').textContent));
+      await phone.click('#btnFilters');
+      await phone.waitForTimeout(300);
+      const folded = await phone.evaluate(() => ({ selects: document.querySelectorAll('#filterBar select').length, list: Math.round(document.getElementById('channelScroller').getBoundingClientRect().height) }));
+      check('the menu button opens the filters on a phone and folds them away again',
+        filtered.length === 1 && filtered[0] === 'Sport Eins' && folded.selects === 0 && folded.list > 300,
+        JSON.stringify({ filtered, folded }));
+      await phone.screenshot({ path: join(outDir, 'live-tv-phone.png') }).catch(() => {});
+    } finally {
+      await phone.close();
+    }
+
     check('no page errors (live TV run)', errs5.length === 0, errs5.join(' ; ').slice(0, 300));
   } catch (e) {
     failures++; console.error('❌ live TV run crashed:', e);

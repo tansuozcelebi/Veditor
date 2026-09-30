@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { RefreshCw, Tv } from 'lucide-react';
+import { Menu, RefreshCw, Tv, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,7 @@ import { ChannelList } from './ChannelList';
 import { FilterBar } from './FilterBar';
 import { StreamPlayer } from './StreamPlayer';
 import { DEFAULT_SOURCES, facets as buildFacets, loadCatalog, type Catalog, type CatalogSources, type Channel, type LoadProgress } from '../engine/catalog';
-import { prefs, type ViewSettings } from '../engine/prefs';
+import { DEFAULT_SETTINGS, prefs, type ViewSettings } from '../engine/prefs';
 import { useI18n } from '../engine/i18n';
 
 export interface IptvViewerProps {
@@ -48,6 +48,17 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
   const [selected, setSelected] = useState<Channel | null>(null);
   const [search, setSearch] = useState(settings.search);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // On a phone the filter block is taller than the list it filters, so it starts folded away there
+  // and the header's menu button opens it. On a wide screen there is room for both.
+  const [wide, setWide] = useState(() => typeof matchMedia === 'function' ? matchMedia('(min-width: 901px)').matches : true);
+  const [filtersOpen, setFiltersOpen] = useState(wide);
+  useEffect(() => {
+    if (typeof matchMedia !== 'function') return;
+    const mq = matchMedia('(min-width: 901px)');
+    const apply = () => { setWide(mq.matches); setFiltersOpen(mq.matches); };
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, []);
 
   const load = useCallback((refresh: boolean) => {
     const controller = new AbortController();
@@ -96,12 +107,15 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
     toast.success(t('rec.added'));
   } : undefined), [onRecorded, t]);
 
+  // shown as a dot on the menu button, so a filter left on is never invisible
+  const narrowed = !!settings.group || !!settings.category || !!settings.country || !!settings.language
+    || settings.onlyFavorites || !settings.hideNsfw || settings.sort !== DEFAULT_SETTINGS.sort;
   const loading = progress !== null;
   const pct = progress?.total ? `%${Math.round((progress.loaded! / progress.total) * 100)}` : '';
 
   return (
     <div className={cn('veditor-iptv bg-background text-foreground dark flex h-full min-h-0 w-full min-w-0 overflow-hidden max-[900px]:flex-col', className)}>
-      <aside className="bg-card flex w-[360px] min-w-0 shrink-0 flex-col border-r max-[900px]:h-1/2 max-[900px]:w-full max-[900px]:border-r-0 max-[900px]:border-b" id="channelPanel">
+      <aside className="bg-card flex w-[360px] min-w-0 shrink-0 flex-col border-r max-[900px]:order-2 max-[900px]:h-auto max-[900px]:min-h-0 max-[900px]:w-full max-[900px]:flex-1 max-[900px]:border-r-0" id="channelPanel">
         <div className="flex items-center gap-2 border-b px-3 py-2">
           <Tv className="size-4 shrink-0 text-red-500" />
           <div className="min-w-0 flex-1">
@@ -116,13 +130,21 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
                 : t('subtitle')}
             </p>
           </div>
+          <Button
+            id="btnFilters" variant="ghost" size="icon-sm" title={t('filter.toggle')}
+            aria-expanded={filtersOpen} aria-controls="filterBar"
+            onClick={() => setFiltersOpen((v) => !v)}
+          >
+            {filtersOpen ? <X /> : <Menu />}
+            {!filtersOpen && narrowed && <span className="absolute mt-4 ml-4 size-1.5 rounded-full bg-red-500" />}
+          </Button>
           <Button id="btnRefresh" variant="ghost" size="icon-sm" title={t('load.refresh')} disabled={loading} onClick={() => load(true)}>
             <RefreshCw className={cn(loading && 'animate-spin')} />
           </Button>
         </div>
 
         <FilterBar
-          settings={settings} facets={facets} search={search} onSearch={onSearch}
+          settings={settings} facets={facets} search={search} open={filtersOpen} onSearch={onSearch}
           onChange={(patch) => prefs.update(patch)}
           onReset={() => { setSearch(''); prefs.reset(); }}
         />
@@ -150,7 +172,7 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
         )}
       </aside>
 
-      <StreamPlayer channel={selected} onSendToEditor={sendToEditor} />
+      <StreamPlayer channel={selected} onSendToEditor={sendToEditor} className="max-[900px]:order-1 max-[900px]:flex-none max-[900px]:border-b" />
       <Toaster position="bottom-center" richColors />
     </div>
   );

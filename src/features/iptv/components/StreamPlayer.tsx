@@ -23,10 +23,11 @@ const isHls = (url: string) => /\.m3u8(\?|$)/i.test(url);
  * segments through Media Source Extensions. That also makes the picture same-origin, which is what
  * lets the recorder capture it at all.
  */
-export function StreamPlayer({ channel, onSendToEditor }: {
+export function StreamPlayer({ channel, onSendToEditor, className }: {
   channel: Channel | null;
   /** Hands a finished recording to the host (the editor page) – hidden when not provided. */
   onSendToEditor?: (file: File) => void | Promise<void>;
+  className?: string;
 }) {
   const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -180,8 +181,9 @@ export function StreamPlayer({ channel, onSendToEditor }: {
   const label = sharing ? t('share.on') : channel?.sortName ?? '';
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col" id="playerPanel">
-      <div ref={stageRef} className="relative flex min-h-0 flex-1 items-center justify-center bg-black" id="playerStage">
+    <section className={cn('flex min-h-0 min-w-0 flex-1 flex-col', className)} id="playerPanel">
+      {/* on a phone the picture is a 16:9 band at the top, so the channel list keeps the rest */}
+      <div ref={stageRef} className="relative flex min-h-0 flex-1 items-center justify-center bg-black max-[900px]:aspect-video max-[900px]:flex-none" id="playerStage">
         <video
           ref={videoRef}
           id="playerVideo"
@@ -211,15 +213,15 @@ export function StreamPlayer({ channel, onSendToEditor }: {
         )}
       </div>
 
-      <div className="bg-card flex flex-wrap items-center gap-2 border-t px-3 py-2">
+      <div className="bg-card flex flex-wrap items-center gap-2 border-t px-3 py-2 max-[900px]:gap-1 max-[900px]:px-2">
         <div className="mr-auto flex min-w-0 items-center gap-2">
-          {channel?.logo && !sharing && <img src={channel.logo} alt="" className="size-6 shrink-0 object-contain" />}
+          {channel?.logo && !sharing && <img src={channel.logo} alt="" className="size-6 shrink-0 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
           <span className="truncate text-sm font-medium" id="playerTitle">{label}</span>
           {channel?.quality && !sharing && <Badge variant="secondary" className="shrink-0 text-[10px]">{channel.quality}</Badge>}
         </div>
 
         <Button id="btnMute" variant="ghost" size="icon-sm" title={t('player.mute')} onClick={() => setMuted((m) => !m)}>{muted ? <VolumeX /> : <Volume2 />}</Button>
-        <Slider id="playerVolume" className="w-24" min={0} max={1} step={0.01} value={[volume]} onValueChange={(v) => { setVolume(v[0]); setMuted(v[0] === 0); }} aria-label={t('player.volume')} />
+        <Slider id="playerVolume" className="w-24 max-[900px]:hidden" min={0} max={1} step={0.01} value={[volume]} onValueChange={(v) => { setVolume(v[0]); setMuted(v[0] === 0); }} aria-label={t('player.volume')} />
         <Button id="btnPip" variant="ghost" size="icon-sm" title={t('player.pip')} onClick={() => { const v = videoRef.current!; if (document.pictureInPictureElement) void document.exitPictureInPicture(); else void v.requestPictureInPicture?.().catch(() => {}); }}><PictureInPicture2 /></Button>
         <Button id="btnFull" variant="ghost" size="icon-sm" title={t('player.fullscreen')} onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); else void stageRef.current?.requestFullscreen?.().catch(() => {}); }}><Maximize2 /></Button>
         {channel && (
