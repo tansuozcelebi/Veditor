@@ -9,7 +9,7 @@ import { formatBytes, formatTime } from '@/features/video-editor';
 import { cn } from '@/lib/utils';
 import type { Channel } from '../engine/catalog';
 import { useI18n } from '../engine/i18n';
-import { canRecord, captureFrom, startRecording, type Recording } from '../engine/recorder';
+import { canRecord, captureFrom, startRecording, startSegmentRecording, type Recording } from '../engine/recorder';
 
 type Status = 'idle' | 'loading' | 'playing' | 'error';
 /** `errPolicy` is this page's own CSP, so it says nothing about the channel itself. */
@@ -155,22 +155,37 @@ export function StreamPlayer({ channel, onSendToEditor, onFailed, onPlaying, cla
   }, [t, stopSharing]);
 
   // ---------- recording ----------
+  // Two ways, and the better one first. An HLS channel is already arriving as finished segments, so
+  // they are simply kept: original quality, no decoder, and nothing the browser can refuse. Only a
+  // shared screen or a natively played stream needs MediaRecorder, which can have no more than the
+  // page is allowed to look at – and a cross-origin video is not that.
   const beginRecording = useCallback(() => {
-    if (!canRecord()) { toast.error(t('rec.unsupported')); return; }
-    const video = videoRef.current!;
-    const stream = sharing ? shareRef.current : captureFrom(video);
-    if (!stream || !stream.getTracks().length) {
-      toast.error(sharing || status !== 'playing' ? t('rec.noStream') : t('rec.tainted'), { duration: 10000 });
+    const name = sharing ? 'ekran' : (channel?.sortName || 'yayin');
+    const begin = (start: () => ReturnType<typeof startRecording>) => {
+      try {
+        recorderRef.current = start();
+        setRecordingMs(0);
+        setResult(null);
+      } catch (e) {
+        toast.error(t('rec.failed', { e: String((e as Error)?.message ?? e) }));
+      }
+    };
+
+    const hls = hlsRef.current;
+    if (!sharing && hls && status === 'playing') {
+      begin(() => startSegmentRecording(hls, name, setRecordingMs));
+      toast.success(t('rec.lossless'), { duration: 6000 });
       return;
     }
-    try {
-      const name = sharing ? 'ekran' : (channel?.sortName || 'yayin');
-      recorderRef.current = startRecording(stream, name, setRecordingMs);
-      setRecordingMs(0);
-      setResult(null);
-    } catch (e) {
-      toast.error(t('rec.failed', { e: String((e as Error)?.message ?? e) }));
+
+    if (!canRecord()) { toast.error(t('rec.unsupported')); return; }
+    if (status !== 'playing' && !sharing) { toast.error(t('rec.noStream'), { duration: 8000 }); return; }
+    const { stream, blocked } = sharing ? { stream: shareRef.current, blocked: false } : captureFrom(videoRef.current!);
+    if (!stream || !stream.getTracks().length) {
+      toast.error(blocked ? t('rec.tainted') : t('rec.noStream'), { duration: 10000 });
+      return;
     }
+    begin(() => startRecording(stream, name, setRecordingMs));
   }, [channel, sharing, status, t]);
 
   const endRecording = useCallback(async () => {
@@ -253,7 +268,10 @@ export function StreamPlayer({ channel, onSendToEditor, onFailed, onPlaying, cla
 
       {result && (
         <div className="flex flex-wrap items-center gap-2 border-t bg-emerald-950/40 px-3 py-2 text-sm" id="recResult">
-          <span className="mr-auto truncate">{result.fileName} · {formatBytes(result.blob.size)} · {formatTime(result.durationMs / 1000, { ms: false })}</span>
+          <span className="mr-auto truncate">
+            {result.fileName} · {formatBytes(result.blob.size)} · {formatTime(result.durationMs / 1000, { ms: false })}
+            {result.lossless && <span className="text-emerald-300"> · {t('rec.original')}</span>}
+          </span>
           <Button size="xs" asChild><a href={result.url} download={result.fileName}>{t('rec.download')}</a></Button>
           {onSendToEditor && (
             <Button id="btnRecToEditor" size="xs" variant="secondary" onClick={() => void onSendToEditor(new File([result.blob], result.fileName, { type: result.blob.type }))}>
