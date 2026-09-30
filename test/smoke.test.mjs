@@ -677,6 +677,9 @@ try {
       groups: [...document.querySelectorAll('#filterGroup option')].map((o) => o.textContent),
       languages: [...document.querySelectorAll('#filterLanguage option')].map((o) => o.textContent),
       countries: [...document.querySelectorAll('#filterCountry option')].map((o) => o.textContent),
+      countryGroups: [...document.querySelectorAll('#filterCountry optgroup')].map((g) => ({ label: g.label, options: [...g.children].map((o) => o.textContent) })),
+      categories: [...document.querySelectorAll('#filterCategory option')].map((o) => o.textContent),
+      firstRowMeta: document.querySelector('.channel-row')?.textContent.replace(/\s+/g, ' ').trim(),
     }));
     // 7 #EXTINF lines, one of them without a URL: 6 streams, 5 shown once adult content is hidden
     check('the playlist is parsed and its awkward entries survive',
@@ -689,6 +692,42 @@ try {
         && loaded.languages.some((l) => l.startsWith('Kurdish'))        // only on the main feed of that channel
         && loaded.countries.some((c) => c.includes('Germany')),
       JSON.stringify({ first: loaded.rows[0], languages: loaded.languages }));
+
+    // The playlist writes `ChannelId@FeedId`; the API keys on the channel id alone. Joining on the
+    // raw tvg-id silently loses every category and language, and turns the country into "TR@SD".
+    check('a tvg-id carrying a feed suffix still joins to the API',
+      loaded.categories.some((c) => c.startsWith('News')) && loaded.categories.some((c) => c.startsWith('Sports'))
+        && loaded.languages.some((l) => l.startsWith('German'))
+        && !loaded.countries.some((c) => c.includes('@')) && !loaded.rows.some((r) => r.includes('@'))
+        && /^Haber 1\S*Haber, Politika · Türkiye · Turkish/.test(loaded.firstRowMeta),
+      JSON.stringify({ categories: loaded.categories, countries: loaded.countries, firstRow: loaded.firstRowMeta }));
+
+    check('the country list is one entry per country, code beside name, Türkiye first',
+      loaded.countries[1] === '🇹🇷 TR · Türkiye (3)'
+        && loaded.countryGroups.length === 2 && loaded.countryGroups[0].label === 'Öne çıkan'
+        && loaded.countryGroups[0].options.join() === '🇹🇷 TR · Türkiye (3)'
+        && loaded.countryGroups[1].label === 'Diğer ülkeler'
+        && loaded.countryGroups[1].options.every((o) => /^\S+ [A-Z]{2} · /.test(o)),
+      JSON.stringify({ countries: loaded.countries, groups: loaded.countryGroups }));
+
+    await p5.selectOption('#filterCategory', 'sports');
+    await p5.waitForTimeout(250);
+    const sports = await names();
+    await p5.selectOption('#filterCategory', 'news');
+    await p5.waitForTimeout(250);
+    const news = await names();
+    await p5.selectOption('#filterCategory', '');
+    await p5.waitForTimeout(250);
+    check('the category filter narrows the list',
+      sports.join() === 'Sport Eins' && news.join() === 'Haber 1,Haber 1 yedek,News 24',
+      JSON.stringify({ sports, news }));
+
+    await p5.selectOption('#filterCountry', 'TR');
+    await p5.waitForTimeout(250);
+    const turkish = await names();
+    await p5.selectOption('#filterCountry', '');
+    await p5.waitForTimeout(250);
+    check('the country filter narrows the list', turkish.join() === 'Haber 1,Haber 1 yedek,Müzik 1', JSON.stringify(turkish));
 
     await p5.selectOption('#filterLanguage', 'deu');
     await p5.waitForTimeout(250);
