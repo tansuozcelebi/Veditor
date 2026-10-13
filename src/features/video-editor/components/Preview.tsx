@@ -7,7 +7,7 @@ import { useEditor, useI18n, usePlayerTime, useStoreEvents } from '../hooks/useE
 import { formatTime } from '../engine/state';
 import { TransformOverlay } from './TransformOverlay';
 
-export function Preview({ recording }: { recording?: boolean }) {
+export function Preview({ recording, onOpenInspector }: { recording?: boolean; onOpenInspector?: () => void }) {
   const { player, canvas, store } = useEditor();
   const { t } = useI18n();
   const { time, playing } = usePlayerTime();
@@ -20,15 +20,28 @@ export function Preview({ recording }: { recording?: boolean }) {
   useEffect(() => {
     const stage = stageRef.current!;
     canvas.className = 've-preview-canvas';
-    canvas.onclick = () => void player.toggle();
+    // a click plays / pauses, a double click opens the layer under the pointer – so the single click
+    // waits a moment to be sure it is not the first half of a double one
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    canvas.onclick = (e) => { clearTimeout(timer); if (e.detail > 1) return; timer = setTimeout(() => void player.toggle(), 230); };
     stage.appendChild(canvas);
-    return () => { canvas.remove(); };
+    return () => { clearTimeout(timer); canvas.onclick = null; canvas.remove(); };
   }, [canvas, player]);
 
+  const openLayerAt = (e: React.MouseEvent) => {
+    const r = canvas.getBoundingClientRect();
+    if (!r.width) return;
+    const k = store.project.width / r.width;
+    const hit = player.hitTest((e.clientX - r.left) * k, (e.clientY - r.top) * k);
+    if (!hit) return;
+    e.preventDefault();
+    store.selectClips([hit.id]);
+    onOpenInspector?.();
+  };
   const total = store.projectDuration();
   return (
     <section className="flex min-h-0 min-w-0 flex-col" id="previewPanel">
-      <div ref={stageRef} className="relative flex min-h-0 flex-1 items-center justify-center p-3 max-[900px]:p-1.5" id="previewStage">
+      <div ref={stageRef} className="relative flex min-h-0 flex-1 items-center justify-center p-3 max-[900px]:p-1.5" id="previewStage" title={t('preview.dblHint')} onDoubleClick={openLayerAt}>
         <TransformOverlay stage={stageRef} />
         {recording && <div className="rec-indicator absolute top-4 right-4 rounded-md bg-black/70 px-2.5 py-1.5 text-xs text-white">REC</div>}
       </div>

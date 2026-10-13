@@ -98,7 +98,7 @@ export function TimelinePanel({ actions, timelineRef }: { actions: TimelineActio
             <div ref={refs.rulerWrap} className="tl-ruler-wrap" id="tlRulerWrap"><canvas ref={refs.ruler} id="tlRuler" /></div>
             <div ref={refs.headers} className="tl-headers" id="tlHeaders" />
             <div ref={refs.lanes} className="tl-lanes" id="tlLanes"><div ref={refs.lanesInner} className="tl-lanes-inner" id="tlLanesInner" /></div>
-            <div ref={refs.playhead} className="tl-playhead" id="tlPlayhead"><div className="tl-playhead-cap" /></div>
+            <div ref={refs.playhead} className="tl-playhead" id="tlPlayhead"><div className="tl-playhead-hit" id="tlPlayheadHit" /><div className="tl-playhead-cap" /></div>
           </div>
         </ContextMenuTrigger>
         {(

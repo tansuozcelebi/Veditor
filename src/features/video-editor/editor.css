@@ -76,7 +76,13 @@
 .veditor .clip .junction:hover { background: var(--ve-video); }
 @media (pointer: coarse) { .veditor .clip .junction { width: 24px; height: 24px; line-height: 22px; } .veditor .clip .handle { width: 14px; } }
 .veditor .tl-playhead { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--ve-playhead); z-index: 7; pointer-events: none; }
-.veditor .tl-playhead-cap { position: absolute; top: 0; left: -7px; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 9px solid var(--ve-playhead); }
+/* a wide, invisible grip around the thin line, so it can be caught without landing on a clip below it */
+.veditor .tl-playhead-hit { position: absolute; top: 0; bottom: 0; left: -8px; width: 16px; pointer-events: auto; cursor: ew-resize; touch-action: none; }
+.veditor .tl-playhead-hit:hover + .tl-playhead-cap, .veditor .tl-playhead.grabbed .tl-playhead-cap { transform: scale(1.35); }
+.veditor .tl-playhead.grabbed { border-left-width: 3px; }
+.veditor .tl-playhead-cap { position: absolute; top: 0; left: -9px; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 12px solid var(--ve-playhead); pointer-events: none; transform-origin: 50% 0; transition: transform .1s; }
+.veditor .tl-playhead.under-header .tl-playhead-hit { pointer-events: none; }
+@media (pointer: coarse) { .veditor .tl-playhead-hit { left: -14px; width: 28px; } }
 .veditor .snap-line { position: absolute; top: 0; bottom: 0; border-left: 1px dashed #fff; z-index: 6; pointer-events: none; }
 
 /* ---------- media library ---------- */

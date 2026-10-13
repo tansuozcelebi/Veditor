@@ -164,7 +164,8 @@ export class Player extends Emitter {
   }
   async resumeAudio() {
     const ctx = this.ensureAudio();
-    if (ctx.state !== 'running') { try { await ctx.resume(); } catch { /* ignore */ } }
+    // some browsers leave resume() pending forever without a user gesture; never let that stall playback
+    if (ctx.state !== 'running') { try { await Promise.race([ctx.resume(), new Promise((r) => setTimeout(r, 400))]); } catch { /* ignore */ } }
   }
   _applyMonitor() {
     if (!this.monitorGain || !this.audio) return;
@@ -245,17 +246,42 @@ export class Player extends Emitter {
   }
 
   // ---------- transport ----------
+  /**
+   * The transport follows the audio clock while it runs (so picture and sound stay locked). When the
+   * browser keeps the audio context suspended – no user gesture yet, a blocked autoplay – that clock
+   * stands still, and playback would silently freeze; the wall clock takes over instead.
+   */
+  private _wallClock = false;
+  _clockNow() { return !this._wallClock && this.audio ? this.audio.currentTime : performance.now() / 1000; }
   get currentTime(): number {
-    if (this.playing && this.audio) return this._startTime + (this.audio.currentTime - this._startCtx);
+    if (this.playing) return this._startTime + (this._clockNow() - this._startCtx);
     return this._time;
   }
   get duration() { return this.store.projectDuration(); }
+  private _warned = new Map<string, number>();
+  /** Tells the UI why playback is not doing what was asked; the same warning at most every few seconds. */
+  warn(code: 'empty' | 'audio' | 'loading' | 'blocked' | 'media', data: Record<string, string | number> = {}) {
+    const key = code + (data.name ?? '');
+    const now = performance.now();
+    if (now - (this._warned.get(key) ?? -1e9) < 6000) return;
+    this._warned.set(key, now);
+    this.emit('warn', { code, ...data });
+  }
   async play() {
     if (this.playing) return;
+    if (this.duration <= 0) { this.warn('empty'); return; }
     this.attach();
     await this.resumeAudio();
+    this._wallClock = this.audio!.state !== 'running';
+    if (this._wallClock && !this.exporting) this.warn('audio');
     if (this._time >= this.duration - 1e-3) this._time = 0;
-    this._startCtx = this.audio!.currentTime;
+    // clips under the playhead that are still loading show nothing yet – say so rather than look broken
+    const loading = this.store.project.clips.filter((c) => {
+      const n = this.nodes.get(c.id);
+      return n && !n.ready && n.kind !== 'image' && this._time >= c.start && this._time < c.start + c.duration;
+    });
+    if (loading.length) this.warn('loading', { name: loading[0].name || '' });
+    this._startCtx = this._clockNow();
     this._startTime = this._time;
     this.playing = true;
     this.emit('play');
@@ -271,7 +297,7 @@ export class Player extends Emitter {
   toggle() { return this.playing ? this.pause() : this.play(); }
   seek(t: number) {
     t = clamp(t, 0, Math.max(0, this.duration));
-    if (this.playing) { this._startTime = t; this._startCtx = this.audio!.currentTime; }
+    if (this.playing) { this._startTime = t; this._startCtx = this._clockNow(); }
     else this._time = t;
     this.emit('time', t);
   }
@@ -374,7 +400,11 @@ export class Player extends Emitter {
           if (el.paused) {
             if (!pastEnd) {
               if (Math.abs(el.currentTime - localT) > SCRUB_TOLERANCE) el.currentTime = localT;
-              el.play().catch(() => { /* autoplay policy: will retry next frame */ });
+              el.play().catch((err: DOMException) => {
+                // autoplay policy: retried next frame, but the user should know why nothing moves
+                if (err?.name === 'NotAllowedError') this.warn('blocked');
+                else if (err?.name === 'NotSupportedError') this.warn('media', { name: clip.name || '' });
+              });
             }
           } else if (!pastEnd && Math.abs(el.currentTime - localT) > DRIFT_TOLERANCE) {
             el.currentTime = localT;
@@ -525,6 +555,16 @@ export class Player extends Emitter {
     const cx = dest.x + dest.w / 2 + (ox / 100) * dest.w;
     const cy = dest.y + dest.h / 2 + (oy / 100) * dest.h;
     return { x: cx - dw / 2, y: cy - dh / 2, w: dw, h: dh, el: el as CanvasImageSource };
+  }
+
+  /** The topmost visible layer under a point of the composition (project pixels), or null. */
+  hitTest(px: number, py: number, t: number = this.currentTime): Clip | null {
+    const visual = this._visualClips(t).filter((v) => !v.extended).reverse(); // top layer first
+    for (const { clip } of visual) {
+      const b = this.clipBounds(clip);
+      if (b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return clip;
+    }
+    return null;
   }
 
   /** The rectangle a clip occupies in the composition (project pixels), for on-canvas editing. */

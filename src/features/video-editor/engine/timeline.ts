@@ -336,6 +336,8 @@ export class Timeline {
     const x = hw + this.timeToX(tm);
     playhead.style.left = x + 'px';
     playhead.style.height = Math.max(body.scrollHeight, body.clientHeight) + 'px';
+    // scrolled under the sticky track headers, the grip must not swallow clicks meant for them
+    playhead.classList.toggle('under-header', x < body.scrollLeft + hw);
     if (autoScroll && this.player.playing) {
       const visL = body.scrollLeft + hw, visR = body.scrollLeft + body.clientWidth;
       if (x > visR - 20 || x < visL) body.scrollLeft = Math.max(0, x - hw - 40);
@@ -346,6 +348,14 @@ export class Timeline {
   _bind() {
     const { rulerWrap, body } = this.els;
     rulerWrap.addEventListener('pointerdown', (e) => { if (e.button === 0) this._scrubStart(e); });
+    body.addEventListener('scroll', () => this._positionPlayhead(this.player.currentTime, false), { passive: true });
+    // the playhead itself is a handle: grabbing it scrubs, and never starts a clip drag or a pan underneath
+    const grip = this.els.playhead.querySelector('.tl-playhead-hit') as HTMLElement | null;
+    grip?.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      this._scrubStart(e, true);
+    });
     body.addEventListener('wheel', (e) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
@@ -356,14 +366,36 @@ export class Timeline {
       }
     }, { passive: false });
   }
-  _scrubStart(e: PointerEvent) {
+  _scrubStart(e: PointerEvent, fromHandle = false) {
     const target = e.currentTarget as HTMLElement;
-    const move = (ev: PointerEvent) => { this.player.seek(this.timeFromClientX(ev.clientX)); };
-    const up = () => { target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up); };
+    const body = this.els.body;
+    let lastX = e.clientX, edgeTimer = 0;
+    // dragging past the visible edge scrolls the timeline a little at a time, instead of the view jumping
+    const edgeScroll = () => {
+      edgeTimer = 0;
+      const r = body.getBoundingClientRect(), left = r.left + this.headerW();
+      const d = lastX < left + 24 ? -1 : lastX > r.right - 24 ? 1 : 0;
+      if (!d) return;
+      body.scrollLeft = Math.max(0, body.scrollLeft + d * 14);
+      this.player.seek(this.timeFromClientX(Math.min(Math.max(lastX, left), r.right)));
+      edgeTimer = requestAnimationFrame(edgeScroll);
+    };
+    const move = (ev: PointerEvent) => {
+      lastX = ev.clientX;
+      const r = body.getBoundingClientRect(), left = r.left + this.headerW();
+      this.player.seek(Math.max(0, this.timeFromClientX(Math.min(Math.max(ev.clientX, left), r.right))));
+      if (!edgeTimer) edgeTimer = requestAnimationFrame(edgeScroll);
+    };
+    const up = () => {
+      cancelAnimationFrame(edgeTimer); edgeTimer = 0;
+      this.els.playhead.classList.remove('grabbed');
+      target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up);
+    };
     target.setPointerCapture(e.pointerId);
     target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
+    if (fromHandle) this.els.playhead.classList.add('grabbed');
     if (this.player.playing) this.player.pause();
-    move(e);
+    if (!fromHandle) move(e); // grabbing the handle keeps the playhead where it is until the pointer moves
   }
 
   _snapPoints(excludeIds: string[]) {
