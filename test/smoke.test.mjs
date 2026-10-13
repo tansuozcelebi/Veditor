@@ -288,6 +288,66 @@ try {
   check('fade transition ramps alpha 0→1 over its duration', approx(trans.fx0, 0.1, 0.02) && approx(trans.fx1, 0.9, 0.02) && trans.fxN === 1, `alpha=${trans.fx0},${trans.fx1},${trans.fxN}`);
   check('fading-in clip blends over the layer below', trans.early[2] > trans.late[2] + 40 && trans.late[1] > trans.early[1] + 40, `early=${trans.early.slice(0, 3)} late=${trans.late.slice(0, 3)}`);
 
+  // ---- every transition renders, and the two-clip ones move the predecessor too ----
+  const allTrans = await page.evaluate(async ({ v1 }) => {
+    const { store, player } = window.veditor;
+    const parts = store.clipsOnTrack(v1).filter((c) => c.kind !== 'text');
+    const a2 = parts[1];
+    const keep = { ...a2.transIn };
+    const types = ['fade', 'fade-black', 'fade-white', 'slide-left', 'slide-right', 'slide-up', 'slide-down', 'push-left', 'push-right', 'push-up', 'push-down', 'reveal-left', 'reveal-right', 'wipe-left', 'wipe-right', 'wipe-up', 'wipe-down', 'barn-h', 'barn-v', 'iris', 'diamond', 'clock', 'blinds-h', 'blinds-v', 'zoom', 'zoom-out', 'cross-zoom', 'spin', 'flip', 'blur', 'pixelate'];
+    const failed = [];
+    for (const type of types) {
+      store.updateClip(a2.id, { transIn: { type, duration: 1 } }, { silent: true });
+      try { player.render(a2.start + 0.5); } catch (e) { failed.push(type + ': ' + e.message); }
+    }
+    store.updateClip(a2.id, { transIn: { type: 'push-left', duration: 1 } }, { silent: true });
+    const out = player._outgoingFx(a2, a2.start + 0.5), inc = player._transitionFx(a2, a2.start + 0.5);
+    store.updateClip(a2.id, { transIn: { type: 'fade-black', duration: 1 } }, { silent: true });
+    const dipOut = player._outgoingFx(a2, a2.start + 0.25), dipIn = player._transitionFx(a2, a2.start + 0.25);
+    store.updateClip(a2.id, { transIn: keep });
+    const picker = !!document.querySelector('#transInType optgroup');
+    return { failed, out: out.dx, inc: inc.dx, dipOut: dipOut.overlay?.alpha, dipIn: dipIn.alpha, n: types.length, picker };
+  }, placed);
+  check('all 31 transitions render; push moves both clips, dip goes through black',
+    allTrans.failed.length === 0 && approx(allTrans.out, -0.5) && approx(allTrans.inc, 0.5) && approx(allTrans.dipOut, 0.5) && allTrans.dipIn === 0,
+    JSON.stringify(allTrans));
+
+  // ---- text: font, shadow, reflection; layer opacity; moving / resizing on the preview ----
+  const textFx = await page.evaluate(async () => {
+    const { store, player, addTextClip } = window.veditor;
+    const free = store.projectDuration() + 1;
+    player.pause();
+    const c = addTextClip(free, 'REFLECT');
+    store.updateClip(c.id, { color: '#ffffff', fontSize: 14, y: -20, shadow: false, reflection: false, transIn: { type: 'none', duration: 0.4 }, transOut: { type: 'none', duration: 0.4 } });
+    const W = player.canvas.width, H = player.canvas.height, g = player.canvas.getContext('2d');
+    const bright = () => { player.render(free + 1); const d = g.getImageData(0, Math.round(H * 0.42), W, Math.round(H * 0.15)).data; let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i]; return s; };
+    const without = bright();
+    store.updateClip(c.id, { reflection: true, reflectionOpacity: 0.8, reflectionLength: 100 });
+    const withRefl = bright();
+    const b = player.clipBounds(c);
+    store.updateClip(c.id, { reflection: false, shadow: true, shadowColor: '#ff0000', shadowOpacity: 1, shadowBlur: 0, shadowX: 10, shadowY: 10 });
+    player.render(free + 1);
+    // a red copy of the glyphs, offset down-right of the white ones
+    const d = g.getImageData(Math.round(b.x), Math.round(b.y), Math.round(b.w), Math.round(b.h)).data;
+    let red = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 60 && d[i + 2] < 60) red++;
+    const trackOk = (() => { store.updateTrack(c.trackId, { opacity: 0.5 }); player.render(free + 1); const p = g.getImageData(0, 0, W, H).data; let m = 0; for (let i = 0; i < p.length; i += 4) m = Math.max(m, p[i + 1]); store.updateTrack(c.trackId, { opacity: 1 }); return m; })();
+    store.selectClips([c.id]);
+    player.seek(free + 1);
+    return { id: c.id, without, withRefl, red, trackMax: trackOk, bounds: !!b && b.w > 50 };
+  });
+  await page.waitForSelector('#transformBox', { timeout: 5000 });
+  const tb = await page.locator('#transformBox').boundingBox();
+  await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2); await page.mouse.down();
+  await page.mouse.move(tb.x + tb.width / 2 + 60, tb.y + tb.height / 2 + 30, { steps: 4 }); await page.mouse.up();
+  const corner = await page.locator('#transformBox [data-corner=se]').boundingBox();
+  await page.mouse.move(corner.x + corner.width / 2, corner.y + corner.height / 2); await page.mouse.down();
+  await page.mouse.move(corner.x + 50, corner.y + 30, { steps: 4 }); await page.mouse.up();
+  const moved = await page.evaluate((id) => { const c = window.veditor.store.getClip(id); const r = { x: c.x, y: c.y, scale: c.scale, preview: !!document.querySelector('[data-testid=font-preview]'), fonts: document.querySelectorAll('#textFont option').length }; window.veditor.store.removeClips([id]); return r; }, textFx.id);
+  check('text reflection paints a mirror image below the text', textFx.withRefl > textFx.without * 1.05, JSON.stringify(textFx));
+  check('text shadow uses its own colour and offset', textFx.red > 50, `red px=${textFx.red}`);
+  check('layer opacity dims the whole track', textFx.trackMax > 90 && textFx.trackMax < 170, `max=${textFx.trackMax}`);
+  check('the selected layer can be moved and resized on the preview', moved.x > 1 && moved.y > -20 && moved.scale > 1.05 && moved.preview && moved.fonts > 40, JSON.stringify(moved));
+
   // ---- dockable panels ----
   const box = () => page.evaluate(() => {
     const rect = (id) => { const el = document.getElementById(id); if (!el) return null; const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), right: Math.round(r.right), bottom: Math.round(r.bottom) }; };
@@ -792,7 +852,7 @@ try {
     await p5.waitForFunction(() => [...(window.veditor?.store.media.values() ?? [])].some((m) => !m.analyzing), null, { timeout: 60000 }).catch(() => null);
     const inEditor = await p5.evaluate(() => [...window.veditor.store.media.values()].map((m) => ({ name: m.name, kind: m.kind, duration: +m.duration.toFixed(1), w: m.width })));
     check('a recording of the stream lands in the editor as a usable clip',
-      /Haber 1\.webm/.test(recorded) && p5.url().includes('/video-editor')
+      /Haber 1\.mp4/.test(recorded) && p5.url().includes('/video-editor')
         && inEditor.length === 1 && inEditor[0].kind === 'video' && inEditor[0].duration >= 1.5 && inEditor[0].w === 640,
       JSON.stringify({ recorded: recorded.slice(0, 60), inEditor }));
 
@@ -901,7 +961,7 @@ try {
     await p5.click('#btnShare');                              // stop sharing
     await p5.waitForFunction(() => document.getElementById('playerStatus')?.dataset.sharing === 'false', null, { timeout: 10000 });
     check('the shared screen is shown and can be recorded',
-      shared.srcObject && shared.w === 320 && /Ekran paylaşılıyor/.test(shared.badge) && /ekran\.webm/.test(sharedRec),
+      shared.srcObject && shared.w === 320 && /Ekran paylaşılıyor/.test(shared.badge) && /ekran\.mp4/.test(sharedRec),
       JSON.stringify({ shared, sharedRec: sharedRec.slice(0, 50) }));
     // ---- a phone: the list is what matters, so the filters fold away behind the menu button ----
     const phone = await b5.newPage({ ...devices['Pixel 7'], locale: 'tr-TR' });
@@ -942,9 +1002,23 @@ try {
       await phone.waitForTimeout(300);
       const folded = await phone.evaluate(() => ({ selects: document.querySelectorAll('#filterBar select').length, list: Math.round(document.getElementById('channelScroller').getBoundingClientRect().height) }));
       check('the menu button opens the filters on a phone and folds them away again',
-        filtered.length === 1 && filtered[0] === 'Sport Eins' && folded.selects === 0 && folded.list > 300,
+        // the app menu is a bar along the bottom on a phone, so the list shares the height with it
+        filtered.length === 1 && filtered[0] === 'Sport Eins' && folded.selects === 0 && folded.list > 260,
         JSON.stringify({ filtered, folded }));
       await phone.screenshot({ path: join(outDir, 'live-tv-phone.png') }).catch(() => {});
+      // the editor on the same phone: preview on top, the other panels as tabs, nothing wider than the screen
+      await phone.goto(base + '/video-editor');
+      await phone.waitForSelector('#mobileTabs', { timeout: 30000 });
+      await phone.click('#mobileTabs [data-tab=inspector]');
+      await phone.waitForTimeout(300);
+      const ed = await phone.evaluate(() => {
+        const r = (id) => { const e = document.getElementById(id); if (!e) return null; const b = e.getBoundingClientRect(); return { y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) }; };
+        return { preview: r('previewPanel'), inspector: r('inspectorPanel'), dock: !!document.querySelector('.dv-dockview'), overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth, vw: innerWidth };
+      });
+      check('on a phone the editor shows the preview on top and the panels as tabs',
+        !ed.dock && ed.overflowX === 0 && ed.preview && ed.preview.w === ed.vw && ed.preview.h > 150 && ed.inspector && ed.inspector.y > ed.preview.y + ed.preview.h && ed.inspector.h > 200,
+        JSON.stringify(ed));
+      await phone.screenshot({ path: join(outDir, 'editor-phone.png') }).catch(() => {});
     } finally {
       await phone.close();
     }

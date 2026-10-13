@@ -1,5 +1,6 @@
 // ===================== Export (MediaRecorder: canvas + mixed audio) =====================
 import { fixWebmDuration } from './webm-fix';
+import { ensureFonts } from './fonts';
 import type { Player } from './player';
 import type { Store } from './state';
 import type { ExportFormat, ExportOptions, ExportProgress, ExportResult } from './types';
@@ -48,6 +49,7 @@ export class Exporter {
     try {
       player.pause();
       await player.resumeAudio();
+      await ensureFonts(store.project.clips.filter((c) => c.kind === 'text').map((c) => c.fontFamily));
       await player.prepare();
       player.seek(0);
       player.exporting = true;

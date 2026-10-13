@@ -9,7 +9,7 @@ import { formatBytes, formatTime } from '@/features/video-editor';
 import { cn } from '@/lib/utils';
 import type { Channel } from '../engine/catalog';
 import { useI18n } from '../engine/i18n';
-import { canRecord, captureFrom, startRecording, startSegmentRecording, type Recording } from '../engine/recorder';
+import { canRecord, captureFrom, isMp4, startRecording, startSegmentRecording, toMp4, type Recording } from '../engine/recorder';
 
 type Status = 'idle' | 'loading' | 'playing' | 'error';
 /** `errPolicy` is this page's own CSP, so it says nothing about the channel itself. */
@@ -46,6 +46,8 @@ export function StreamPlayer({ channel, onSendToEditor, onFailed, onPlaying, cla
   const [sharing, setSharing] = useState(false);
   const [recordingMs, setRecordingMs] = useState<number | null>(null);
   const [result, setResult] = useState<Recording | null>(null);
+  /** Progress of the conversion to MP4, while one runs. */
+  const [converting, setConverting] = useState<number | null>(null);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [attempt, setAttempt] = useState(0);
@@ -193,13 +195,27 @@ export function StreamPlayer({ channel, onSendToEditor, onFailed, onPlaying, cla
     recorderRef.current = null;
     setRecordingMs(null);
     if (!rec) return;
+    let done: Recording;
     try {
-      const done = await rec.stop();
-      setResult(done);
-      toast.success(t('rec.done', { size: formatBytes(done.blob.size) }));
+      done = await rec.stop();
     } catch (e) {
       toast.error(t('rec.failed', { e: String((e as Error)?.message ?? e) }));
+      return;
     }
+    // every recording is offered as .mp4; a TS or WebM one is converted here, in the browser
+    if (!isMp4(done)) {
+      setConverting(0);
+      try {
+        done = await toMp4(done, (r) => setConverting(r));
+      } catch (e) {
+        const ext = done.fileName.split('.').pop() ?? '';
+        toast.warning(t('rec.convertFailed', { ext, e: String((e as Error)?.message ?? e).split('\n')[0] }), { duration: 10000 });
+      } finally {
+        setConverting(null);
+      }
+    }
+    setResult(done);
+    toast.success(t('rec.done', { size: formatBytes(done.blob.size) }));
   }, [t]);
 
   // stop everything when the page goes away, so no capture keeps running in the background
@@ -266,19 +282,30 @@ export function StreamPlayer({ channel, onSendToEditor, onFailed, onPlaying, cla
         </Button>
       </div>
 
+      {converting !== null && (
+        <div className="flex items-center gap-2 border-t bg-sky-950/40 px-3 py-2 text-sm" id="recConverting">
+          <span className="size-3 animate-spin rounded-full border-2 border-sky-300 border-t-transparent" />
+          {t('rec.converting', { pct: converting > 0 ? Math.round(converting * 100) + '%' : '' })}
+        </div>
+      )}
       {result && (
         <div className="flex flex-wrap items-center gap-2 border-t bg-emerald-950/40 px-3 py-2 text-sm" id="recResult">
           <span className="mr-auto truncate">
             {result.fileName} · {formatBytes(result.blob.size)} · {formatTime(result.durationMs / 1000, { ms: false })}
             {result.lossless && <span className="text-emerald-300"> · {t('rec.original')}</span>}
           </span>
-          <Button size="xs" asChild><a href={result.url} download={result.fileName}>{t('rec.download')}</a></Button>
+          <Button size="xs" asChild><a id="recDownload" href={result.url} download={result.fileName}>{isMp4(result) ? t('rec.downloadMp4') : t('rec.download')}</a></Button>
+          {result.original && (
+            <Button size="xs" variant="outline" asChild>
+              <a id="recDownloadOriginal" href={result.original.url} download={result.original.fileName}>{t('rec.downloadOriginal', { ext: result.original.fileName.split('.').pop() ?? '' })}</a>
+            </Button>
+          )}
           {onSendToEditor && (
             <Button id="btnRecToEditor" size="xs" variant="secondary" onClick={() => void onSendToEditor(new File([result.blob], result.fileName, { type: result.blob.type }))}>
               {t('rec.toEditor')}
             </Button>
           )}
-          <Button size="xs" variant="ghost" onClick={() => { URL.revokeObjectURL(result.url); setResult(null); }}>{t('rec.dismiss')}</Button>
+          <Button size="xs" variant="ghost" onClick={() => { URL.revokeObjectURL(result.url); if (result.original) URL.revokeObjectURL(result.original.url); setResult(null); }}>{t('rec.dismiss')}</Button>
         </div>
       )}
       <span hidden id="playerStatus" data-status={status} data-sharing={sharing} data-recording={recordingMs !== null} className={cn()} />

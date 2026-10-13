@@ -34,9 +34,19 @@ export function defaultProject(): Project {
   };
 }
 
-export const TRANSITION_TYPES: import('./types').TransitionType[] = ['none', 'fade', 'slide-left', 'slide-right', 'slide-up', 'slide-down', 'zoom', 'wipe-left', 'wipe-right', 'blur'];
+/** Transitions in the order the picker shows them, grouped by family. */
+export const TRANSITION_GROUPS: { key: string; types: import('./types').TransitionType[] }[] = [
+  { key: 'basic', types: ['none', 'fade', 'fade-black', 'fade-white'] },
+  { key: 'slide', types: ['slide-left', 'slide-right', 'slide-up', 'slide-down'] },
+  { key: 'push', types: ['push-left', 'push-right', 'push-up', 'push-down', 'reveal-left', 'reveal-right'] },
+  { key: 'wipe', types: ['wipe-left', 'wipe-right', 'wipe-up', 'wipe-down', 'barn-h', 'barn-v'] },
+  { key: 'shape', types: ['iris', 'diamond', 'clock', 'blinds-h', 'blinds-v'] },
+  { key: 'motion', types: ['zoom', 'zoom-out', 'cross-zoom', 'spin', 'flip'] },
+  { key: 'effect', types: ['blur', 'pixelate'] },
+];
+export const TRANSITION_TYPES: import('./types').TransitionType[] = TRANSITION_GROUPS.flatMap((g) => g.types);
 export const TEXT_DEFAULT_DURATION = 5;
-export const FONT_FAMILIES = ['Arial', 'Helvetica', 'Verdana', 'Trebuchet MS', 'Georgia', 'Times New Roman', 'Courier New', 'Impact', 'Comic Sans MS', 'Segoe UI', 'Roboto', 'sans-serif', 'serif', 'monospace'];
+export { FONT_FAMILIES, FONT_GROUPS } from './fonts';
 
 export function defaultTransition(patch: Partial<Transition> = {}): Transition { return { type: 'none', duration: 0.5, ...patch }; }
 
@@ -50,6 +60,8 @@ export function defaultClip(patch: Partial<Clip> = {}): Clip {
     // text layer properties (used when kind === 'text')
     text: '', fontFamily: 'Arial', fontSize: 8, color: '#ffffff', bold: true, italic: false, align: 'center',
     bgEnabled: false, bgColor: '#000000', bgOpacity: 0.6, outlineColor: '#000000', outlineWidth: 0, shadow: true, lineHeight: 1.2,
+    shadowColor: '#000000', shadowOpacity: 0.6, shadowBlur: 15, shadowX: 4, shadowY: 4,
+    reflection: false, reflectionOpacity: 0.4, reflectionGap: 0, reflectionLength: 60, letterSpacing: 0,
     ...patch,
   };
   c.transIn = defaultTransition(patch.transIn);
@@ -116,7 +128,7 @@ export class Store extends Emitter {
   addTrack(kind: TrackKind, name?: string | null, { silent = false, index }: { silent?: boolean; index?: number } = {}): Track {
     if (!silent) this.pushHistory();
     const n = this.project.tracks.filter((tr) => tr.kind === kind).length + 1;
-    const track: Track = { id: uid(), kind, name: name || `${t(kind === 'video' ? 'track.video' : 'track.audio')} ${n}`, muted: false, solo: false, locked: false, hidden: false, volume: 1 };
+    const track: Track = { id: uid(), kind, name: name || `${t(kind === 'video' ? 'track.video' : 'track.audio')} ${n}`, muted: false, solo: false, locked: false, hidden: false, volume: 1, opacity: 1 };
     if (index == null) {
       // video tracks are grouped at the top (index 0 = top layer), audio tracks below
       if (kind === 'video') this.project.tracks.unshift(track);
@@ -297,6 +309,7 @@ export class Store extends Emitter {
   loadProject(project: Project) {
     this.project = { ...defaultProject(), ...project };
     this.project.clips = (this.project.clips || []).map((c) => defaultClip(c));
+    this.project.tracks = (this.project.tracks || []).map((tr) => ({ ...tr, opacity: tr.opacity ?? 1 }));
     this.history = []; this.future = [];
     this.selection = { clipIds: new Set(), trackId: null };
     this.dirty = false;

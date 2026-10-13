@@ -16,15 +16,15 @@ const editorSession = createEditorSession();
 export function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-      <div className="dark bg-background text-foreground flex h-screen w-screen overflow-hidden">
-        <nav className="bg-sidebar text-sidebar-foreground flex w-14 shrink-0 flex-col items-center gap-1 border-r py-3" aria-label="Menü">
-          <div className="mb-2 flex size-9 items-center justify-center rounded-md bg-red-600 font-bold text-white" title="Veditor">V</div>
+      <div className="dark bg-background text-foreground flex h-dvh w-screen overflow-hidden max-[900px]:flex-col-reverse">
+        <nav className="bg-sidebar text-sidebar-foreground flex w-14 shrink-0 flex-col items-center gap-1 border-r py-3 max-[900px]:w-full max-[900px]:flex-row max-[900px]:justify-around max-[900px]:border-t max-[900px]:border-r-0 max-[900px]:py-0.5 max-[900px]:pb-[max(0.125rem,env(safe-area-inset-bottom))]" aria-label="Menü">
+          <div className="mb-2 max-[900px]:hidden flex size-9 items-center justify-center rounded-md bg-red-600 font-bold text-white" title="Veditor">V</div>
           <MenuLink to="/dashboard" icon={<LayoutDashboard />} label="Panel" />
           <MenuLink to="/video-editor" icon={<Clapperboard />} label="Video Editörü" />
           <MenuLink to="/player" icon={<Tv />} label="Canlı TV" />
           <MenuLink to="/settings" icon={<Settings />} label="Ayarlar" />
         </nav>
-        <div className="min-w-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1">
           <Routes>
             <Route path="/" element={<Navigate to="/video-editor" replace />} />
             <Route path="/video-editor" element={<VideoEditor embedded session={editorSession} />} />
@@ -59,7 +59,7 @@ function PlayerPage() {
 
 function MenuLink({ to, icon, label }: { to: string; icon: React.ReactNode; label: string }) {
   return (
-    <NavLink to={to} title={label} className={({ isActive }) => cn('flex size-10 items-center justify-center rounded-md transition-colors hover:bg-sidebar-accent [&_svg]:size-5', isActive && 'bg-sidebar-accent text-sidebar-primary')}>
+    <NavLink to={to} title={label} className={({ isActive }) => cn('flex size-10 max-[900px]:size-9 items-center justify-center rounded-md transition-colors hover:bg-sidebar-accent [&_svg]:size-5', isActive && 'bg-sidebar-accent text-sidebar-primary')}>
       {icon}<span className="sr-only">{label}</span>
     </NavLink>
   );

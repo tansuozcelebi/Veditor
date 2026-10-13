@@ -169,3 +169,31 @@ export async function transcodeToPlayable(file: File, opts: { onProgress?: (p: T
   await resetFFmpeg(); // never leave a poisoned instance behind for the next file
   throw last;
 }
+
+/**
+ * Turns a recording into an .mp4. The streams are copied into the new container first – seconds of
+ * work and no quality lost (MPEG-TS H.264/AAC, VP9/Opus WebM) – and only when a codec cannot live in
+ * MP4 (VP8, Vorbis) is it re-encoded to H.264 / AAC. `remuxed` says which of the two happened.
+ */
+export async function convertToMp4(file: File, opts: { onProgress?: (p: TranscodeProgress) => void; signal?: AbortSignal } = {}): Promise<{ file: File; remuxed: boolean }> {
+  const tail = ['-movflags', '+faststart'];
+  const attempts: { args: string[]; remuxed: boolean }[] = [
+    { args: ['-map', '0:v:0?', '-map', '0:a:0?', '-c', 'copy', ...tail], remuxed: true },
+    // the picture copies but the sound cannot (Vorbis, or Opus in an old core): re-encode only the audio
+    { args: ['-map', '0:v:0?', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', ...tail], remuxed: false },
+    { args: ['-map', '0:v:0?', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '160k', ...tail], remuxed: false },
+  ];
+  let last: unknown;
+  for (const [i, a] of attempts.entries()) {
+    try {
+      const out = await runFFmpeg(file, a.args, 'out.mp4', { ...opts, type: 'video/mp4' });
+      return { file: out, remuxed: a.remuxed };
+    } catch (e) {
+      last = e;
+      if (opts.signal?.aborted) break;
+      if (OUT_OF_MEMORY.test(String((e as Error)?.message))) await resetFFmpeg();
+      if (i < attempts.length - 1) console.warn('[veditor] mp4 conversion attempt failed, trying the next one', e);
+    }
+  }
+  throw last;
+}

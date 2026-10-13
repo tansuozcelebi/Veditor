@@ -3,12 +3,13 @@
 // serves both. The result is a WebM file with a real Duration written into it (browsers leave it
 // out of a live recording), which is what makes it seekable and importable into the editor.
 import Hls from 'hls.js';
-import { fixWebmDuration } from '@/features/video-editor';
+import { convertToMp4, fixWebmDuration } from '@/features/video-editor';
 
-/** The first format this browser can write, best first. */
+/** The first format this browser can write, best first: MP4 (H.264 / AAC) where the browser can, so no conversion is needed. */
 export function pickMimeType(): string | undefined {
   if (typeof MediaRecorder === 'undefined') return undefined;
   const candidates = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1',
     'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8',
     'video/webm', 'video/mp4',
   ];
@@ -21,6 +22,30 @@ export interface Recording {
   blob: Blob; url: string; fileName: string; durationMs: number; mimeType: string;
   /** The broadcaster's own bytes, kept as they arrived – no decoder, no re-encode, no quality lost. */
   lossless?: boolean;
+  /** The file as it was recorded, when the one offered was converted to MP4 from it. */
+  original?: { blob: Blob; url: string; fileName: string };
+}
+
+export const isMp4 = (rec: Recording) => /\.mp4$/i.test(rec.fileName);
+
+/**
+ * The recording as an .mp4. Already MP4 (fragmented HLS, or a browser that records MP4) comes back
+ * as it is; MPEG-TS and WebM are copied into an MP4 container, or re-encoded only when a codec cannot
+ * live in MP4. The original is kept alongside, so nothing is lost if the user wants it.
+ */
+export async function toMp4(rec: Recording, onProgress?: (ratio: number) => void): Promise<Recording> {
+  if (isMp4(rec)) return rec;
+  const src = new File([rec.blob], rec.fileName, { type: rec.mimeType });
+  const { file, remuxed } = await convertToMp4(src, { onProgress: (p) => onProgress?.(p.stage === 'converting' ? p.ratio : 0) });
+  return {
+    blob: file,
+    url: URL.createObjectURL(file),
+    fileName: rec.fileName.replace(/\.[^.]+$/, '') + '.mp4',
+    durationMs: rec.durationMs,
+    mimeType: 'video/mp4',
+    lossless: !!rec.lossless && remuxed,
+    original: { blob: rec.blob, url: rec.url, fileName: rec.fileName },
+  };
 }
 
 /**

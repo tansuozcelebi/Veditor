@@ -15,6 +15,8 @@ export interface TimelineHooks {
   onMessage?: (msg: string) => void;
   onZoom?: (sliderValue: number) => void;
   onClipLiveChange?: (clip: Clip) => void;
+  /** The marker between two touching clips was clicked: `clipId` is the one that follows. */
+  onJunction?: (clipId: string) => void;
 }
 interface DragState { mode: 'move' | 'trimL' | 'trimR'; clipId: string; startX: number; startY: number; moved: boolean; orig: Clip; snapshot: string; maxDur: number }
 
@@ -62,7 +64,7 @@ export class Timeline {
   xToTime(x: number) { return Math.max(0, x / this.pps); }
   contentWidth() {
     const dur = this.store.projectDuration();
-    return Math.max(this.els.body.clientWidth - HEADER_W, this.timeToX(dur) + 600);
+    return Math.max(this.els.body.clientWidth - this.headerW(), this.timeToX(dur) + 600);
   }
   /** Timeline time from a client X coordinate. */
   timeFromClientX(cx: number) {
@@ -93,7 +95,7 @@ export class Timeline {
   }
   zoomFit() {
     const dur = this.store.projectDuration() || 10;
-    this.pps = clamp((this.els.body.clientWidth - HEADER_W - 60) / dur, PPS_MIN, PPS_MAX);
+    this.pps = clamp((this.els.body.clientWidth - this.headerW() - 60) / dur, PPS_MIN, PPS_MAX);
     this.els.body.scrollLeft = 0;
     this.render();
     this.hooks.onZoom && this.hooks.onZoom(this.zoomSliderValue());
@@ -197,12 +199,17 @@ export class Timeline {
     return null;
   }
   setDraggingMediaKind(kind: string) { this._dragMediaKind = kind; }
+  /** Width of the track-header column: narrower on a phone (set in CSS), so read it rather than assume it. */
+  headerW() { return this.els.headers.offsetWidth || HEADER_W; }
 
   _makeClipEl(c: Clip) {
     const el = document.createElement('div');
     el.dataset.clipId = c.id;
-    el.innerHTML = `<div class="thumbs"></div><canvas class="wave"></canvas><div class="fade in"></div><div class="fade out"></div><div class="trans in" title="">⟋</div><div class="trans out" title="">⟍</div><div class="clip-label"></div><div class="handle l"></div><div class="handle r"></div>`;
+    el.innerHTML = `<div class="thumbs"></div><canvas class="wave"></canvas><div class="fade in"></div><div class="fade out"></div><div class="trans in" title="">⟋</div><div class="trans out" title="">⟍</div><div class="clip-label"></div><div class="handle l"></div><div class="handle r"></div><button type="button" class="junction" hidden></button>`;
     el.addEventListener('pointerdown', (e) => this._clipPointerDown(e, c.id));
+    const junction = el.querySelector('.junction') as HTMLButtonElement;
+    junction.addEventListener('pointerdown', (e) => { e.stopPropagation(); });
+    junction.addEventListener('click', (e) => { e.stopPropagation(); this.store.selectClips([c.id]); this.hooks.onJunction?.(c.id); });
     // the context menu is handled by the host UI (React ContextMenu on the timeline body)
     return el;
   }
@@ -223,6 +230,16 @@ export class Timeline {
     tIn.hidden = !(showT && c.transIn && c.transIn.type !== 'none');
     tOut.hidden = !(showT && c.transOut && c.transOut.type !== 'none');
     if (!tIn.hidden) { tIn.style.width = Math.max(10, this.timeToX(c.transIn.duration)) + 'px'; tIn.title = t('trans.' + c.transIn.type) + ' · ' + c.transIn.duration + ' s'; }
+    // a cut between two touching clips gets a marker that opens its transition
+    const junction = el.querySelector('.junction') as HTMLButtonElement;
+    const prev = showT ? this.store.adjacentPrev(c) : null;
+    junction.hidden = !prev;
+    if (prev) {
+      const has = c.transIn && c.transIn.type !== 'none';
+      junction.classList.toggle('set', !!has);
+      junction.textContent = has ? '⧓' : '+';
+      junction.title = has ? t('trans.junction', { name: t('trans.' + c.transIn.type) }) : t('trans.junctionAdd');
+    }
     if (!tOut.hidden) { tOut.style.width = Math.max(10, this.timeToX(c.transOut.duration)) + 'px'; tOut.title = t('trans.' + c.transOut.type) + ' · ' + c.transOut.duration + ' s'; }
     this._renderClipContent(el, c, m, track);
   }
@@ -315,12 +332,13 @@ export class Timeline {
   }
   _positionPlayhead(tm: number, autoScroll: boolean) {
     const { body, playhead } = this.els;
-    const x = HEADER_W + this.timeToX(tm);
+    const hw = this.headerW();
+    const x = hw + this.timeToX(tm);
     playhead.style.left = x + 'px';
     playhead.style.height = Math.max(body.scrollHeight, body.clientHeight) + 'px';
     if (autoScroll && this.player.playing) {
-      const visL = body.scrollLeft + HEADER_W, visR = body.scrollLeft + body.clientWidth;
-      if (x > visR - 20 || x < visL) body.scrollLeft = Math.max(0, x - HEADER_W - 40);
+      const visL = body.scrollLeft + hw, visR = body.scrollLeft + body.clientWidth;
+      if (x > visR - 20 || x < visL) body.scrollLeft = Math.max(0, x - hw - 40);
     }
   }
 

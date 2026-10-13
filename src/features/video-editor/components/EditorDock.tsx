@@ -11,6 +11,7 @@ import { SourcePlayer } from './SourcePlayer';
 import { TimelinePanel } from './TimelinePanel';
 import { useI18n } from '../hooks/useEditor';
 import { t as translate } from '../engine/i18n';
+import { cn } from '@/lib/utils';
 
 /** Where the arrangement is remembered. Bump the suffix when the set of panels changes. */
 const LAYOUT_KEY = 'veditor.layout.v1';
@@ -179,6 +180,49 @@ export function EditorDock({ panels, onHandle, className }: { panels: DockPanelP
         singleTabMode="fullwidth"
         disableFloatingGroups={false}
       />
+    </PanelPropsContext.Provider>
+  );
+}
+
+/** Panels a phone shows under the preview, one at a time. */
+const MOBILE_TABS: Exclude<PanelId, 'preview'>[] = ['timeline', 'inspector', 'library', 'source'];
+export type MobileTab = (typeof MOBILE_TABS)[number];
+
+const MOBILE_COMPONENTS: Record<MobileTab, () => React.ReactElement> = { timeline: TimelineDockPanel, inspector: InspectorPanel, library: LibraryPanel, source: SourcePanel };
+
+/**
+ * The workspace on a phone: docking five panels side by side does not fit a 400-pixel screen, so the
+ * preview keeps the top and the other panels share the rest as tabs. Every panel stays mounted, so a
+ * tab switch keeps the timeline's scroll, the source player and the inspector exactly where they were.
+ */
+export function MobileWorkspace({ panels, tab, onTab, className }: { panels: DockPanelProps; tab: MobileTab; onTab: (tab: MobileTab) => void; className?: string }) {
+  const { t } = useI18n();
+  return (
+    <PanelPropsContext.Provider value={panels}>
+      <div className={cn('flex min-h-0 flex-col', className)} id="mobileWorkspace">
+        <div className="flex h-[36vh] min-h-[200px] shrink-0 flex-col border-b [&>*]:min-h-0 [&>*]:flex-1">
+          <PreviewPanel />
+        </div>
+        <div role="tablist" aria-label={t('panel.mobileTabs')} className="bg-card flex shrink-0 border-b" id="mobileTabs">
+          {MOBILE_TABS.map((id) => (
+            <button
+              key={id} type="button" role="tab" data-tab={id} aria-selected={tab === id}
+              className={cn('text-muted-foreground flex-1 truncate px-1 py-2 text-xs font-medium', tab === id && 'text-foreground shadow-[inset_0_-2px_0_var(--ve-video)]')}
+              onClick={() => onTab(id)}
+            >
+              {t(PANEL_TITLE[id])}
+            </button>
+          ))}
+        </div>
+        {MOBILE_TABS.map((id) => {
+          const Panel = MOBILE_COMPONENTS[id];
+          return (
+            <div key={id} role="tabpanel" className="min-h-0 flex-1 flex-col [&>*]:min-h-0 [&>*]:flex-1" style={{ display: tab === id ? 'flex' : 'none' }}>
+              <Panel />
+            </div>
+          );
+        })}
+      </div>
     </PanelPropsContext.Provider>
   );
 }
