@@ -22,40 +22,50 @@ export function useImportFiles() {
       const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
       return isFinite(left) ? `${mmss(elapsed)} / ~${mmss(elapsed + left)}` : mmss(elapsed);
     };
-    const added = await importFiles(store, files, {
-      signal: abort.signal,
-      onTranscode: (file, p) => {
-        const id = converting.get(file.name);
-        if (!p) { // finished (either way); the success/error toast follows
-          if (id !== undefined) toast.dismiss(id);
-          converting.delete(file.name);
-          startedAt.delete(file.name);
-          stageOf.delete(file.name);
-          return;
-        }
-        // the elapsed/remaining clock measures the current stage, not the upload that preceded it
-        if (stageOf.get(file.name) !== p.stage) { stageOf.set(file.name, p.stage); startedAt.set(file.name, Date.now()); }
-        const pct = Math.round(p.ratio * 100);
-        // The work happens either on the host or in this tab; say which, so a slow conversion is explainable.
-        const msg = p.stage === 'loading' ? t('library.convertingLoad', { name: file.name })
-          : p.stage === 'uploading' ? t('library.uploading', { name: file.name, pct })
-          : p.stage === 'downloading' ? t('library.downloading', { name: file.name, pct })
-          : t(p.where === 'server' ? 'library.convertingServer' : 'library.converting', { name: file.name, pct, time: clock(file.name, p.ratio) });
-        converting.set(file.name, toast.loading(msg, {
-          id,
-          duration: Infinity,
-          cancel: { label: t('library.cancel'), onClick: () => { abort.abort(); toast.message(t('library.cancelled', { name: file.name })); } },
-        }));
-      },
-      onError: (file, e) => {
-        const reason = e instanceof MediaImportError ? e.reason : null;
-        // A blocked blob: URL surfaces as a codec error; say what really happened.
-        const key = cspBlocksLocalMedia() ? 'library.err.csp'
-          : reason === 'unsupported' ? 'library.unsupported'
-          : reason ? `library.err.${reason}` : 'library.loadError';
-        toast.error(t(key, { name: file.name }), { duration: 12000 });
-      },
-    });
+    // reading a large file takes a while before anything shows up: say at once that it has started
+    const pending = toast.loading(files.length === 1 ? t('library.importingOne', { name: files[0].name }) : t('library.importing', { n: files.length }));
+    let failed = 0;
+    let added: MediaItem[] = [];
+    try {
+      added = await importFiles(store, files, {
+        signal: abort.signal,
+        onTranscode: (file, p) => {
+          const id = converting.get(file.name);
+          if (!p) { // finished (either way); the success/error toast follows
+            if (id !== undefined) toast.dismiss(id);
+            converting.delete(file.name);
+            startedAt.delete(file.name);
+            stageOf.delete(file.name);
+            return;
+          }
+          // the elapsed/remaining clock measures the current stage, not the upload that preceded it
+          if (stageOf.get(file.name) !== p.stage) { stageOf.set(file.name, p.stage); startedAt.set(file.name, Date.now()); }
+          const pct = Math.round(p.ratio * 100);
+          // The work happens either on the host or in this tab; say which, so a slow conversion is explainable.
+          const msg = p.stage === 'loading' ? t('library.convertingLoad', { name: file.name })
+            : p.stage === 'uploading' ? t('library.uploading', { name: file.name, pct })
+            : p.stage === 'downloading' ? t('library.downloading', { name: file.name, pct })
+            : t(p.where === 'server' ? 'library.convertingServer' : 'library.converting', { name: file.name, pct, time: clock(file.name, p.ratio) });
+          converting.set(file.name, toast.loading(msg, {
+            id,
+            duration: Infinity,
+            cancel: { label: t('library.cancel'), onClick: () => { abort.abort(); toast.message(t('library.cancelled', { name: file.name })); } },
+          }));
+        },
+        onError: (file, e) => {
+          failed++;
+          const reason = e instanceof MediaImportError ? e.reason : null;
+          // A blocked blob: URL surfaces as a codec error; say what really happened.
+          const key = cspBlocksLocalMedia() ? 'library.err.csp'
+            : reason === 'unsupported' ? 'library.unsupported'
+            : reason ? `library.err.${reason}` : 'library.loadError';
+          toast.error(t(key, { name: file.name }), { duration: 12000 });
+        },
+      });
+    } finally {
+      toast.dismiss(pending);
+    }
+    if (!added.length && !failed) toast.error(t('library.nothingImported'));
     const convertedCount = added.filter((m) => m.transcoded).length;
     if (convertedCount) added.filter((m) => m.transcoded).forEach((m) => toast.success(t('library.converted', { name: m.name })));
     if (added.length > convertedCount) toast.success(t('library.imported', { n: added.length - convertedCount }));

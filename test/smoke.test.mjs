@@ -348,6 +348,23 @@ try {
   check('layer opacity dims the whole track', textFx.trackMax > 90 && textFx.trackMax < 170, `max=${textFx.trackMax}`);
   check('the selected layer can be moved and resized on the preview', moved.x > 1 && moved.y > -20 && moved.scale > 1.05 && moved.preview && moved.fonts > 40, JSON.stringify(moved));
 
+  // ---- the playhead is a handle of its own, and a double click on a layer opens its properties ----
+  const before = await page.evaluate(() => { const { store, player } = window.veditor; player.pause(); player.seek(1); store.clearSelection(); return { starts: store.project.clips.map((c) => c.start), sel: store.selection.clipIds.size }; });
+  await page.waitForTimeout(200);
+  const grip = await page.locator('#tlPlayheadHit').boundingBox();
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + 140); await page.mouse.down();
+  await page.mouse.move(grip.x + grip.width / 2 + 120, grip.y + 140, { steps: 6 }); await page.mouse.up();
+  const afterGrip = await page.evaluate(() => { const { store, player } = window.veditor; return { t: player.currentTime, starts: store.project.clips.map((c) => c.start), sel: store.selection.clipIds.size }; });
+  check('the playhead can be grabbed anywhere along it and dragged without moving clips',
+    afterGrip.t > 1.5 && JSON.stringify(afterGrip.starts) === JSON.stringify(before.starts) && afterGrip.sel === 0,
+    JSON.stringify({ t: afterGrip.t, moved: JSON.stringify(afterGrip.starts) !== JSON.stringify(before.starts), sel: afterGrip.sel }));
+  const cv = await page.locator('#previewStage canvas').boundingBox();
+  await page.mouse.dblclick(cv.x + cv.width / 2, cv.y + cv.height / 2);
+  await page.waitForTimeout(400);
+  const dbl = await page.evaluate(() => ({ sel: window.veditor.store.selectedClips().map((c) => c.kind), title: document.getElementById('inspectorTitle')?.textContent, playing: window.veditor.player.playing }));
+  check('double-clicking a layer on the preview selects it and opens its properties', dbl.sel.length === 1 && dbl.title === 'Klip' && !dbl.playing, JSON.stringify(dbl));
+  await page.evaluate(() => window.veditor.store.clearSelection());
+
   // ---- dockable panels ----
   const box = () => page.evaluate(() => {
     const rect = (id) => { const el = document.getElementById(id); if (!el) return null; const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), right: Math.round(r.right), bottom: Math.round(r.bottom) }; };
@@ -533,6 +550,10 @@ try {
   try {
     await p2.goto(base + '/video-editor');
     await p2.waitForFunction(() => window.veditor && window.veditor.tl);
+    // play on an empty timeline explains itself instead of silently doing nothing
+    await p2.click('#btnPlay');
+    const emptyToast = await p2.waitForFunction(() => [...document.querySelectorAll('[data-sonner-toast]')].map((x) => x.textContent).find((x) => /Zaman çizelgesi boş/.test(x)) || null, null, { timeout: 5000 }).then((h) => h.jsonValue()).catch(() => null);
+    check('Play on an empty timeline says why nothing happens', !!emptyToast, String(emptyToast).slice(0, 80));
     await p2.setInputFiles('#fileInput', [join(fixtures, 'clipA.webm')]);
     await p2.waitForFunction(() => document.querySelectorAll('.media-card').length === 1 && [...window.veditor.store.media.values()].every((m) => !m.analyzing), null, { timeout: 30000 });
     await p2.hover('.media-card'); await p2.click('.media-card .actions button:first-child'); // "+" → add to timeline

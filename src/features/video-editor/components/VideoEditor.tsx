@@ -182,6 +182,15 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
     });
   }, [store]);
 
+  // ---------- playback problems ----------
+  // When play does nothing visible (an empty timeline, a browser holding back sound or autoplay, a
+  // clip still loading), say why instead of leaving the user to press the button again.
+  useEffect(() => player.on('warn', (w: { code: string; name?: string }) => {
+    const msg = t('play.warn.' + w.code, { name: w.name ?? '' });
+    if (w.code === 'empty' || w.code === 'loading') toast.info(msg, { id: 'play-' + w.code });
+    else toast.warning(msg, { id: 'play-' + w.code, duration: 8000 });
+  }), [player, t]);
+
   // ---------- environment report ----------
   // Imports happen entirely in the browser, so the console is where a failure can be understood:
   // print what this browser can decode and whether the page allows local files at all.
@@ -248,6 +257,13 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
     return () => { delete (window as any).veditor; };
   }, [store, player, exporter, dock, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, importFiles]);
 
+  /** Brings the properties panel into view – reopening it if it was closed, switching tabs on a phone. */
+  const openInspector = () => {
+    if (phone) { setMobileTab('inspector'); return; }
+    if (!dock) return;
+    if (!dock.isOpen('inspector')) dock.toggle('inspector');
+    dock.api.getPanel('inspector')?.api.setActive();
+  };
   const actions = { split: splitSelected, duplicate: duplicateSelected, detachAudio: detachAudioSelected, deleteSelected, crossfade: crossfadeSelected, addText: () => addTextClip() };
 
   // Every panel is a dockable panel: it can be dragged to another edge, stacked into tabs, resized,
@@ -260,7 +276,7 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
       onDragStart: (m) => timelineRef.current?.setDraggingMediaKind(m.kind),
       onRemove: removeMedia,
     },
-    preview: { recording: recordOpen },
+    preview: { recording: recordOpen, onOpenInspector: openInspector },
     inspector: { actions },
     source: { mediaId: libSelected, onSelect: setLibSelected, onAdd: (id) => { addMediaToTimeline(id, { time: player.currentTime }); } },
     timeline: {
@@ -274,7 +290,7 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
         junction: (id) => {
           const c = store.getClip(id);
           if (c && c.transIn.type === 'none') store.updateClip(id, { transIn: { type: 'fade', duration: Math.min(0.5, c.duration / 2) } });
-          if (phone) setMobileTab('inspector'); else dock?.api.getPanel('inspector')?.api.setActive();
+          openInspector();
           setTimeout(() => document.getElementById('transitionSection')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50);
         },
       },
