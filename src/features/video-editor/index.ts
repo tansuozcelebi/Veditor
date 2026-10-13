@@ -9,4 +9,5 @@ export { setLang, getLang, t, onLangChange, type Lang } from './engine/i18n';
 // For a host that produces media of its own (a recording, a download) and wants it in the editor.
 export { importFiles, ACCEPT_ATTRIBUTE } from './engine/media';
 export { fixWebmDuration } from './engine/webm-fix';
+export { convertToMp4, type TranscodeProgress } from './engine/transcode';
 export type * from './engine/types';

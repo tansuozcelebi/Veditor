@@ -12,6 +12,8 @@ export interface TimelineActions {
   split: () => void; deleteSelected: () => void; duplicate: () => void; detachAudio: () => void; crossfade: () => void; addText: () => void;
   addTrack: (kind: 'video' | 'audio') => void; onDropMedia: (mediaId: string, trackId: string, time: number) => void; onDropFiles: (files: File[], trackId: string, time: number) => void;
   revealMedia: (mediaId: string) => void;
+  /** The marker between two touching clips was clicked. */
+  junction?: (clipId: string) => void;
 }
 
 export function TimelinePanel({ actions, timelineRef }: { actions: TimelineActions; timelineRef: React.MutableRefObject<Timeline | null> }) {
@@ -30,6 +32,7 @@ export function TimelinePanel({ actions, timelineRef }: { actions: TimelineActio
       onDropMedia: (m, tr, time) => actionsRef.current.onDropMedia(m, tr, time),
       onDropFiles: (files, tr, time) => actionsRef.current.onDropFiles(files, tr, time),
       onZoom: (v) => setZoom(v),
+      onJunction: (id) => actionsRef.current.junction?.(id),
     };
     const tl = new Timeline(store, player, {
       body: refs.body.current!, rulerWrap: refs.rulerWrap.current!, ruler: refs.ruler.current!, headers: refs.headers.current!,
@@ -55,26 +58,26 @@ export function TimelinePanel({ actions, timelineRef }: { actions: TimelineActio
 
   return (
     <section className="bg-card flex min-h-0 min-w-0 flex-col" id="timelinePanel">
-      <div className="flex flex-wrap items-center gap-3 border-b px-3 py-1.5">
+      <div className="flex flex-wrap items-center gap-3 border-b px-3 py-1.5 max-[900px]:gap-1 max-[900px]:px-1.5" id="timelineToolbar">
         <div className="flex items-center gap-1">
-          <Button id="btnUndo" variant="ghost" size="xs" disabled={!store.canUndo()} onClick={() => store.undo()}><Undo2 /> {t('edit.undo')}</Button>
-          <Button id="btnRedo" variant="ghost" size="xs" disabled={!store.canRedo()} onClick={() => store.redo()}><Redo2 /> {t('edit.redo')}</Button>
+          <Button id="btnUndo" variant="ghost" size="xs" disabled={!store.canUndo()} onClick={() => store.undo()}><Undo2 /> <span className="max-[900px]:hidden">{t('edit.undo')}</span></Button>
+          <Button id="btnRedo" variant="ghost" size="xs" disabled={!store.canRedo()} onClick={() => store.redo()}><Redo2 /> <span className="max-[900px]:hidden">{t('edit.redo')}</span></Button>
         </div>
         <div className="flex items-center gap-1">
-          <Button id="btnSplit" variant="outline" size="xs" title={t('edit.splitHint')} onClick={actions.split}><Scissors /> {t('edit.split')}</Button>
-          <Button id="btnDelete" variant="outline" size="xs" disabled={n === 0} title={t('edit.deleteHint')} onClick={actions.deleteSelected}><Trash2 /> {t('edit.delete')}</Button>
-          <Button id="btnDuplicate" variant="outline" size="xs" disabled={n === 0} onClick={actions.duplicate}><Copy /> {t('edit.duplicate')}</Button>
-          <Button id="btnDetachAudio" variant="outline" size="xs" disabled={!single || single.kind === 'text'} title={t('edit.detachAudioHint')} onClick={actions.detachAudio}><Music /> {t('edit.detachAudio')}</Button>
+          <Button id="btnSplit" variant="outline" size="xs" title={t('edit.splitHint')} onClick={actions.split}><Scissors /> <span className="max-[900px]:hidden">{t('edit.split')}</span></Button>
+          <Button id="btnDelete" variant="outline" size="xs" disabled={n === 0} title={t('edit.deleteHint')} onClick={actions.deleteSelected}><Trash2 /> <span className="max-[900px]:hidden">{t('edit.delete')}</span></Button>
+          <Button id="btnDuplicate" variant="outline" size="xs" disabled={n === 0} onClick={actions.duplicate}><Copy /> <span className="max-[900px]:hidden">{t('edit.duplicate')}</span></Button>
+          <Button id="btnDetachAudio" variant="outline" size="xs" disabled={!single || single.kind === 'text'} title={t('edit.detachAudioHint')} onClick={actions.detachAudio}><Music /> <span className="max-[900px]:hidden">{t('edit.detachAudio')}</span></Button>
         </div>
         <div className="flex items-center gap-1">
-          <Button id="btnAddVideoTrack" variant="outline" size="xs" onClick={() => actions.addTrack('video')}>＋🎞 {t('track.addVideo')}</Button>
-          <Button id="btnAddAudioTrack" variant="outline" size="xs" onClick={() => actions.addTrack('audio')}>＋🎵 {t('track.addAudio')}</Button>
-          <Button id="btnAddText" variant="outline" size="xs" title={t('text.addHint')} onClick={actions.addText}><Type /> {t('text.add')}</Button>
+          <Button id="btnAddVideoTrack" variant="outline" size="xs" onClick={() => actions.addTrack('video')}>＋🎞 <span className="max-[900px]:hidden">{t('track.addVideo')}</span></Button>
+          <Button id="btnAddAudioTrack" variant="outline" size="xs" onClick={() => actions.addTrack('audio')}>＋🎵 <span className="max-[900px]:hidden">{t('track.addAudio')}</span></Button>
+          <Button id="btnAddText" variant="outline" size="xs" title={t('text.addHint')} onClick={actions.addText}><Type /> <span className="max-[900px]:hidden">{t('text.add')}</span></Button>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Label className="text-muted-foreground gap-1.5 text-xs"><Switch id="snapToggle" checked={snap} onCheckedChange={setSnap} /> {t('timeline.snap')}</Label>
+          <Label className="text-muted-foreground gap-1.5 text-xs"><Switch id="snapToggle" checked={snap} onCheckedChange={setSnap} /> <span className="max-[900px]:hidden">{t('timeline.snap')}</span></Label>
           <Button id="btnZoomOut" variant="ghost" size="icon-xs" title={t('timeline.zoomOut')} onClick={() => timelineRef.current?.zoomBy(1 / 1.3, player.currentTime)}><ZoomOut /></Button>
-          <Slider id="zoomSlider" className="w-32" min={0} max={100} step={1} value={[zoom]} onValueChange={(v) => { setZoom(v[0]); timelineRef.current?.setZoomSlider(v[0]); }} />
+          <Slider id="zoomSlider" className="w-32 max-[900px]:w-20" min={0} max={100} step={1} value={[zoom]} onValueChange={(v) => { setZoom(v[0]); timelineRef.current?.setZoomSlider(v[0]); }} />
           <Button id="btnZoomIn" variant="ghost" size="icon-xs" title={t('timeline.zoomIn')} onClick={() => timelineRef.current?.zoomBy(1.3, player.currentTime)}><ZoomIn /></Button>
           <Button id="btnZoomFit" variant="ghost" size="xs" title={t('timeline.zoomFit')} onClick={() => timelineRef.current?.zoomFit()}>⤢</Button>
         </div>

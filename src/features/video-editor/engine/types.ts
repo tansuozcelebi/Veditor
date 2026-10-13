@@ -3,7 +3,13 @@ export type TrackKind = 'video' | 'audio';
 export type MediaKind = 'video' | 'audio' | 'image';
 export type ClipKind = 'media' | 'text';
 export type PlacementKind = MediaKind | 'text';
-export type TransitionType = 'none' | 'fade' | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down' | 'zoom' | 'wipe-left' | 'wipe-right' | 'blur';
+export type TransitionType =
+  | 'none' | 'fade' | 'fade-black' | 'fade-white'
+  | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down'
+  | 'push-left' | 'push-right' | 'push-up' | 'push-down' | 'reveal-left' | 'reveal-right'
+  | 'wipe-left' | 'wipe-right' | 'wipe-up' | 'wipe-down' | 'barn-h' | 'barn-v'
+  | 'iris' | 'diamond' | 'clock' | 'blinds-h' | 'blinds-v'
+  | 'zoom' | 'zoom-out' | 'cross-zoom' | 'spin' | 'flip' | 'blur' | 'pixelate';
 export type FitMode = 'contain' | 'cover' | 'stretch';
 export type TextAlign = 'left' | 'center' | 'right';
 
@@ -12,6 +18,8 @@ export interface Transition { type: TransitionType; duration: number }
 export interface Track {
   id: string; kind: TrackKind; name: string;
   muted: boolean; solo: boolean; locked: boolean; hidden: boolean; volume: number;
+  /** Opacity of the whole layer (video tracks), multiplied with each clip's own opacity. */
+  opacity: number;
 }
 
 export interface Clip {
@@ -22,6 +30,11 @@ export interface Clip {
   transIn: Transition; transOut: Transition;
   text: string; fontFamily: string; fontSize: number; color: string; bold: boolean; italic: boolean; align: TextAlign;
   bgEnabled: boolean; bgColor: string; bgOpacity: number; outlineColor: string; outlineWidth: number; shadow: boolean; lineHeight: number;
+  /** Text shadow: colour, opacity, blur and offset (blur/offsets in % of the font size). */
+  shadowColor: string; shadowOpacity: number; shadowBlur: number; shadowX: number; shadowY: number;
+  /** Mirror image of the text below it: opacity at the top, gap and fade length (in % of the text block height). */
+  reflection: boolean; reflectionOpacity: number; reflectionGap: number; reflectionLength: number;
+  letterSpacing: number;
 }
 
 export interface Project {

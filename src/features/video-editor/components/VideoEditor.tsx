@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { EditorProvider, useEditor, useI18n, type EditorContextValue, type EditorSession } from '../hooks/useEditor';
 import { TopBar } from './TopBar';
 import { useImportFiles } from '../hooks/useImportFiles';
-import { EditorDock, LayoutMenu, type DockHandle, type DockPanelProps } from './EditorDock';
+import { EditorDock, LayoutMenu, MobileWorkspace, type DockHandle, type DockPanelProps, type MobileTab } from './EditorDock';
 import { ExportDialog } from './ExportDialog';
 import { RecordDialog } from './RecordDialog';
 import { OpenProjectDialog } from './OpenProjectDialog';
@@ -39,6 +39,16 @@ export interface VideoEditorProps {
   session?: EditorSession;
 }
 
+/** Below this width the docked panels give way to the phone layout (preview on top, the rest as tabs). */
+const PHONE_QUERY = '(max-width: 900px)';
+function usePhoneLayout() {
+  return useSyncExternalStore(
+    (cb) => { const mq = window.matchMedia(PHONE_QUERY); mq.addEventListener('change', cb); return () => mq.removeEventListener('change', cb); },
+    () => window.matchMedia(PHONE_QUERY).matches,
+    () => false,
+  );
+}
+
 /** Multi-track video editor. Self-contained: mount it anywhere (a route, a tab, a dialog) inside a shadcn/Tailwind app. */
 export function VideoEditor(props: VideoEditorProps) {
   return (
@@ -58,6 +68,8 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
   const importFiles = useImportFiles();
   const timelineRef = useRef<Timeline | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const phone = usePhoneLayout();
+  const [mobileTab, setMobileTab] = useState<MobileTab>('timeline');
   const [recordOpen, setRecordOpen] = useState(false);
   const [projectData, setProjectData] = useState<ProjectFile | null>(null);
   const [libSelected, setLibSelected] = useState<string | null>(null);
@@ -259,14 +271,22 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
         onDropMedia: (mediaId, trackId, time) => addMediaToTimeline(mediaId, { trackId, time }),
         onDropFiles: async (files, trackId, time) => { const added = await importFiles(files); let tm = time; for (const m of added) { const c = addMediaToTimeline(m.id, { trackId, time: tm, quiet: true }); if (c) tm = c.start + c.duration; } },
         revealMedia: (id) => setLibSelected(id),
+        junction: (id) => {
+          const c = store.getClip(id);
+          if (c && c.transIn.type === 'none') store.updateClip(id, { transIn: { type: 'fade', duration: Math.min(0.5, c.duration / 2) } });
+          if (phone) setMobileTab('inspector'); else dock?.api.getPanel('inspector')?.api.setActive();
+          setTimeout(() => document.getElementById('transitionSection')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50);
+        },
       },
     },
   };
 
   return (
     <div ref={rootRef} className={cn('veditor bg-background text-foreground dark flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden', className)}>
-      <TopBar embedded={embedded} onExport={() => setExportOpen(true)} onSave={saveProject} onOpen={openProject} layout={<LayoutMenu dock={dock} />} />
-      <EditorDock className="min-h-0 min-w-0 flex-1" panels={panels} onHandle={setDock} />
+      <TopBar embedded={embedded} onExport={() => setExportOpen(true)} onSave={saveProject} onOpen={openProject} layout={phone ? null : <LayoutMenu dock={dock} />} />
+      {phone
+        ? <MobileWorkspace className="min-h-0 min-w-0 flex-1" panels={panels} tab={mobileTab} onTab={setMobileTab} />
+        : <EditorDock className="min-h-0 min-w-0 flex-1" panels={panels} onHandle={setDock} />}
       <ExportDialog open={exportOpen} onOpenChange={setExportOpen} onExported={onExport} />
       <RecordDialog open={recordOpen} onOpenChange={setRecordOpen} onRecorded={onRecorded} />
       <OpenProjectDialog data={projectData} onOpenChange={(o) => { if (!o) setProjectData(null); }} />

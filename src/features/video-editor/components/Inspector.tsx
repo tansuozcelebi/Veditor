@@ -1,10 +1,13 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { NativeSelect, NativeSelectGroup, NativeSelectOption } from '@/components/ui/native-select';
 import { Field, RangeField, SectionTitle } from './Field';
 import { useEditor, useI18n, useStoreEvents } from '../hooks/useEditor';
-import { RESOLUTIONS, TRANSITION_TYPES, FONT_FAMILIES, clamp } from '../engine/state';
+import { useEffect, useReducer, useRef } from 'react';
+import { toast } from 'sonner';
+import { RESOLUTIONS, TRANSITION_GROUPS, FONT_GROUPS, clamp } from '../engine/state';
+import { customFonts, ensureFont, onFontsChange, registerFontFile } from '../engine/fonts';
 import type { Clip, Track, TransitionType } from '../engine/types';
 import { cn } from '@/lib/utils';
 
@@ -65,43 +68,10 @@ function ClipInspector({ clip: c, actions }: { clip: Clip; actions: InspectorAct
   const upd = (patch: Partial<Clip>, silent = false) => store.updateClip(c.id, patch, { silent, history: !silent });
   const live = (patch: Partial<Clip>) => upd(patch, true);
   const commit = () => { store.pushHistory(); store.changed('inspector'); };
-  const types = TRANSITION_TYPES;
   return (
     <>
       {isText ? (
-        <>
-          <SectionTitle>{t('text.section')}</SectionTitle>
-          <Field label={t('text.content')}>
-            <Textarea key={c.id} defaultValue={c.text} onBlur={(e) => upd({ text: e.target.value, name: e.target.value.split('\n')[0] })} />
-          </Field>
-          <Field label={t('text.font')}>
-            <NativeSelect size="sm" value={c.fontFamily} onChange={(e) => upd({ fontFamily: e.target.value })}>{FONT_FAMILIES.map((f) => <NativeSelectOption key={f} value={f}>{f}</NativeSelectOption>)}</NativeSelect>
-          </Field>
-          <RangeField label={t('text.size')} value={c.fontSize} min={1} max={40} step={0.5} unit="pct" onChange={(v) => live({ fontSize: v })} onCommit={commit} />
-          <div className="grid grid-cols-2 gap-2.5">
-            <Field label={t('text.color')}><Input type="color" className="h-8 p-1" value={c.color} onChange={(e) => live({ color: e.target.value })} onBlur={commit} /></Field>
-            <Field label={t('text.align')}>
-              <NativeSelect size="sm" value={c.align} onChange={(e) => upd({ align: e.target.value as Clip['align'] })}>
-                <NativeSelectOption value="left">{t('text.alignLeft')}</NativeSelectOption><NativeSelectOption value="center">{t('text.alignCenter')}</NativeSelectOption><NativeSelectOption value="right">{t('text.alignRight')}</NativeSelectOption>
-              </NativeSelect>
-            </Field>
-          </div>
-          <div className="flex flex-wrap gap-1.5" data-testid="text-toggles">
-            <Toggle on={c.bold} onClick={() => upd({ bold: !c.bold })}><b>B</b> {t('text.bold')}</Toggle>
-            <Toggle on={c.italic} onClick={() => upd({ italic: !c.italic })}><i>I</i> {t('text.italic')}</Toggle>
-            <Toggle on={c.bgEnabled} onClick={() => upd({ bgEnabled: !c.bgEnabled })}>▦ {t('text.bg')}</Toggle>
-            <Toggle on={c.shadow} onClick={() => upd({ shadow: !c.shadow })}>◗ {t('text.shadow')}</Toggle>
-          </div>
-          <div className="grid grid-cols-2 gap-2.5">
-            <Field label={t('text.bgColor')}><Input type="color" className="h-8 p-1" value={c.bgColor} onChange={(e) => live({ bgColor: e.target.value })} onBlur={commit} /></Field>
-            <RangeField label={t('text.bgOpacity')} value={c.bgOpacity} min={0} max={1} step={0.01} unit="%" onChange={(v) => live({ bgOpacity: v })} onCommit={commit} />
-          </div>
-          <div className="grid grid-cols-2 gap-2.5">
-            <Field label={t('text.outlineColor')}><Input type="color" className="h-8 p-1" value={c.outlineColor} onChange={(e) => live({ outlineColor: e.target.value })} onBlur={commit} /></Field>
-            <RangeField label={t('text.outline')} value={c.outlineWidth} min={0} max={20} step={0.5} unit="pct" onChange={(v) => live({ outlineWidth: v })} onCommit={commit} />
-          </div>
-          <RangeField label={t('text.lineHeight')} value={c.lineHeight} min={0.8} max={2.5} step={0.05} unit="×" onChange={(v) => live({ lineHeight: v })} onCommit={commit} />
-        </>
+        <TextInspector clip={c} upd={upd} live={live} commit={commit} />
       ) : (
         <>
           <Field label={t('inspector.name')}><Input className="h-8" key={c.id} defaultValue={c.name || m?.name || ''} onBlur={(e) => { if (e.target.value !== c.name) upd({ name: e.target.value }); }} /></Field>
@@ -131,7 +101,7 @@ function ClipInspector({ clip: c, actions }: { clip: Clip; actions: InspectorAct
       {track && track.kind === 'video' && (
         <>
           <SectionTitle>{t('inspector.videoSection')}</SectionTitle>
-          <RangeField label={t('inspector.opacity')} value={c.opacity} min={0} max={1} step={0.01} unit="%" onChange={(v) => live({ opacity: v })} onCommit={commit} />
+          <RangeField label={t('inspector.opacity')} value={c.opacity} min={0} max={1} step={0.01} unit="%" onChange={(v) => live({ opacity: v })} onCommit={commit} testId="clip-opacity" />
           {!isText && (
             <Field label={t('inspector.fit')}>
               <NativeSelect size="sm" value={c.fit} onChange={(e) => upd({ fit: e.target.value as Clip['fit'] })}>
@@ -144,22 +114,21 @@ function ClipInspector({ clip: c, actions }: { clip: Clip; actions: InspectorAct
             <RangeField label={t('inspector.posX')} value={c.x} min={-100} max={100} step={0.5} unit="" onChange={(v) => live({ x: v })} onCommit={commit} />
             <RangeField label={t('inspector.posY')} value={c.y} min={-100} max={100} step={0.5} unit="" onChange={(v) => live({ y: v })} onCommit={commit} />
           </div>
+          <div className="grid grid-cols-3 gap-2.5">
+            <Field label={t('inspector.scale')}><NumberInput value={c.scale} min={0.05} max={10} step={0.05} onChange={(v) => upd({ scale: v })} /></Field>
+            <Field label="X"><NumberInput value={c.x} min={-200} max={200} step={1} onChange={(v) => upd({ x: v })} /></Field>
+            <Field label="Y"><NumberInput value={c.y} min={-200} max={200} step={1} onChange={(v) => upd({ y: v })} /></Field>
+          </div>
+          <p className="text-muted-foreground text-xs leading-relaxed">{t('inspector.canvasHint')}</p>
           <Field label={t('inspector.layoutPresets')}>
             <div className="flex flex-wrap gap-1.5" data-testid="layout-presets">
               {([
                 ['inspector.presetFull', { scale: 1, x: 0, y: 0 }], ['inspector.presetPipTL', { scale: 0.33, x: -32, y: -32 }], ['inspector.presetPipTR', { scale: 0.33, x: 32, y: -32 }],
                 ['inspector.presetPipBL', { scale: 0.33, x: -32, y: 32 }], ['inspector.presetPipBR', { scale: 0.33, x: 32, y: 32 }], ['inspector.presetLeft', { scale: 0.5, x: -25, y: 0 }], ['inspector.presetRight', { scale: 0.5, x: 25, y: 0 }],
-              ] as [string, Partial<Clip>][]).map(([k, p]) => <Button key={k} size="xs" variant="outline" onClick={() => upd({ ...p, fit: 'contain' })}>{t(k)}</Button>)}
+              ] as [string, Partial<Clip>][]).map(([k, p]) => <Button key={k} size="xs" variant="outline" onClick={() => upd(isText ? { x: p.x, y: p.y } : { ...p, fit: 'contain' })}>{t(k)}</Button>)}
             </div>
           </Field>
-          <SectionTitle>{t('trans.section')}</SectionTitle>
-          <div className="grid grid-cols-2 gap-2.5">
-            <Field label={t('trans.in')}><NativeSelect size="sm" value={c.transIn.type} onChange={(e) => upd({ transIn: { ...c.transIn, type: e.target.value as TransitionType } })}>{types.map((k) => <NativeSelectOption key={k} value={k}>{t('trans.' + k)}</NativeSelectOption>)}</NativeSelect></Field>
-            <Field label={t('trans.duration')}><NumberInput value={c.transIn.duration} min={0.1} max={Math.max(0.1, c.duration)} step={0.1} onChange={(v) => upd({ transIn: { ...c.transIn, duration: clamp(v, 0.1, c.duration) } })} /></Field>
-            <Field label={t('trans.out')}><NativeSelect size="sm" value={c.transOut.type} onChange={(e) => upd({ transOut: { ...c.transOut, type: e.target.value as TransitionType } })}>{types.map((k) => <NativeSelectOption key={k} value={k}>{t('trans.' + k)}</NativeSelectOption>)}</NativeSelect></Field>
-            <Field label={t('trans.duration')}><NumberInput value={c.transOut.duration} min={0.1} max={Math.max(0.1, c.duration)} step={0.1} onChange={(v) => upd({ transOut: { ...c.transOut, duration: clamp(v, 0.1, c.duration) } })} /></Field>
-          </div>
-          <p className="text-muted-foreground text-xs leading-relaxed">{t('trans.hint')}</p>
+          <TransitionSection clip={c} upd={upd} />
         </>
       )}
       <ClipActions clip={c} actions={actions} />
@@ -177,6 +146,7 @@ function TrackInspector({ track: tr }: { track: Track }) {
       <Field label={t('inspector.name')}><Input className="h-8" key={tr.id} defaultValue={tr.name} onBlur={(e) => { if (e.target.value && e.target.value !== tr.name) store.updateTrack(tr.id, { name: e.target.value }); }} /></Field>
       <p className="text-muted-foreground text-xs">{t('kind.' + tr.kind)} · {t('inspector.clipCount', { n: store.clipsOnTrack(tr.id).length })}</p>
       <RangeField label={t('inspector.volume')} value={tr.volume} min={0} max={2} step={0.01} unit="%" onChange={(v) => store.updateTrack(tr.id, { volume: v }, { silent: true })} onCommit={() => { store.pushHistory(); store.changed('track'); }} />
+      {tr.kind === 'video' && <RangeField testId="track-opacity" label={t('inspector.trackOpacity')} value={tr.opacity ?? 1} min={0} max={1} step={0.01} unit="%" onChange={(v) => store.updateTrack(tr.id, { opacity: v }, { silent: true })} onCommit={() => { store.pushHistory(); store.changed('track'); }} />}
       <div className="flex flex-wrap gap-1.5">
         {toggles.map(([k, label, ico]) => <Toggle key={k} on={!!tr[k]} onClick={() => store.updateTrack(tr.id, { [k]: !tr[k] } as Partial<Track>)}>{ico} {t(label)}</Toggle>)}
       </div>
@@ -214,5 +184,159 @@ function ProjectInspector({ onChange }: { onChange: () => void }) {
         {rows.map(([k, l]) => (<div key={k} className={cn('contents')}><kbd className="bg-muted rounded border px-1 font-mono text-[11px]">{k}</kbd><span>{t(l)}</span></div>))}
       </div>
     </>
+  );
+}
+
+const SWATCHES = ['#ffffff', '#000000', '#f43f5e', '#f97316', '#facc15', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#a3a3a3', '#78350f'];
+
+/** A colour well with a row of one-click swatches. */
+function ColorField({ label, value, onLive, onPick, commit, testId }: { label: string; value: string; onLive: (v: string) => void; onPick: (v: string) => void; commit: () => void; testId?: string }) {
+  const { t } = useI18n();
+  return (
+    <Field label={label}>
+      <div className="flex items-center gap-2">
+        <Input type="color" data-testid={testId} className="h-8 w-12 shrink-0 p-1" value={value} onChange={(e) => onLive(e.target.value)} onBlur={commit} />
+        <div className="flex flex-wrap gap-1" role="group" aria-label={t('text.swatches')}>
+          {SWATCHES.map((col) => (
+            <button key={col} type="button" title={col} aria-label={col} onClick={() => onPick(col)}
+              className={cn('size-5 rounded-sm border border-white/20', value.toLowerCase() === col && 'ring-ring ring-2 ring-offset-1 ring-offset-transparent')} style={{ background: col }} />
+          ))}
+        </div>
+      </div>
+    </Field>
+  );
+}
+
+type Upd = (patch: Partial<Clip>, silent?: boolean) => void;
+
+/** Font, colour, style, shadow and reflection of a text layer. */
+function TextInspector({ clip: c, upd, live, commit }: { clip: Clip; upd: Upd; live: (p: Partial<Clip>) => void; commit: () => void }) {
+  const { t } = useI18n();
+  const [, refresh] = useReducer((n: number) => n + 1, 0);
+  const fileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => onFontsChange(refresh), []);
+  const custom = customFonts();
+  const known = FONT_GROUPS.some((g) => g.fonts.includes(c.fontFamily)) || custom.includes(c.fontFamily);
+  const pickFont = (f: string) => { void ensureFont(f); upd({ fontFamily: f }); };
+  const onFontFile = async (file?: File) => {
+    if (!file) return;
+    try { const fam = await registerFontFile(file); upd({ fontFamily: fam }); toast.success(t('text.fontLoaded', { name: fam })); }
+    catch (e) { toast.error(t('text.fontFailed', { e: String((e as Error)?.message ?? e) })); }
+  };
+  return (
+    <>
+      <SectionTitle>{t('text.section')}</SectionTitle>
+      <Field label={t('text.content')}>
+        <Textarea key={c.id} defaultValue={c.text} onBlur={(e) => upd({ text: e.target.value, name: e.target.value.split('\n')[0] })} />
+      </Field>
+      <Field label={t('text.font')}>
+        <div className="flex gap-1.5">
+          <NativeSelect id="textFont" size="sm" value={c.fontFamily} onChange={(e) => pickFont(e.target.value)}>
+            {!known && <NativeSelectOption value={c.fontFamily}>{c.fontFamily}</NativeSelectOption>}
+            {custom.length > 0 && <NativeSelectGroup label={t('font.group.custom')}>{custom.map((f) => <NativeSelectOption key={f} value={f} style={{ fontFamily: `"${f}"` }}>{f}</NativeSelectOption>)}</NativeSelectGroup>}
+            {FONT_GROUPS.map((g) => (
+              <NativeSelectGroup key={g.key} label={t('font.group.' + g.key)}>
+                {g.fonts.map((f) => <NativeSelectOption key={f} value={f} style={{ fontFamily: `"${f}", sans-serif` }}>{f}</NativeSelectOption>)}
+              </NativeSelectGroup>
+            ))}
+          </NativeSelect>
+          <Button size="sm" variant="outline" className="h-8 shrink-0 px-2" title={t('text.uploadFontHint')} onClick={() => fileRef.current?.click()}>⇪ {t('text.uploadFont')}</Button>
+          <input ref={fileRef} type="file" hidden accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2" onChange={(e) => { void onFontFile(e.target.files?.[0]); e.target.value = ''; }} />
+        </div>
+        <div data-testid="font-preview" className="bg-muted/50 truncate rounded-md border px-2 py-1 text-lg leading-tight" style={{ fontFamily: `"${c.fontFamily}", sans-serif`, fontWeight: c.bold ? 700 : 400, fontStyle: c.italic ? 'italic' : 'normal', color: c.color }}>
+          {(c.text || 'Aa').split('\n')[0].slice(0, 40) || 'Aa'} · AaÇçĞğŞş 123
+        </div>
+      </Field>
+      <RangeField label={t('text.size')} value={c.fontSize} min={1} max={40} step={0.5} unit="pct" onChange={(v) => live({ fontSize: v })} onCommit={commit} />
+      <ColorField label={t('text.color')} testId="text-color" value={c.color} onLive={(v) => live({ color: v })} onPick={(v) => upd({ color: v })} commit={commit} />
+      <Field label={t('text.align')}>
+        <NativeSelect size="sm" value={c.align} onChange={(e) => upd({ align: e.target.value as Clip['align'] })}>
+          <NativeSelectOption value="left">{t('text.alignLeft')}</NativeSelectOption><NativeSelectOption value="center">{t('text.alignCenter')}</NativeSelectOption><NativeSelectOption value="right">{t('text.alignRight')}</NativeSelectOption>
+        </NativeSelect>
+      </Field>
+      <div className="flex flex-wrap gap-1.5" data-testid="text-toggles">
+        <Toggle on={c.bold} onClick={() => upd({ bold: !c.bold })}><b>B</b> {t('text.bold')}</Toggle>
+        <Toggle on={c.italic} onClick={() => upd({ italic: !c.italic })}><i>I</i> {t('text.italic')}</Toggle>
+        <Toggle on={c.bgEnabled} onClick={() => upd({ bgEnabled: !c.bgEnabled })}>▦ {t('text.bg')}</Toggle>
+        <Toggle on={c.shadow} onClick={() => upd({ shadow: !c.shadow })}>◗ {t('text.shadow')}</Toggle>
+        <Toggle on={c.reflection} onClick={() => upd({ reflection: !c.reflection })}>⧗ {t('text.reflection')}</Toggle>
+      </div>
+      <div className="grid grid-cols-2 gap-2.5">
+        <RangeField label={t('text.letterSpacing')} value={c.letterSpacing} min={-10} max={50} step={0.5} unit="pct" onChange={(v) => live({ letterSpacing: v })} onCommit={commit} />
+        <RangeField label={t('text.lineHeight')} value={c.lineHeight} min={0.8} max={2.5} step={0.05} unit="×" onChange={(v) => live({ lineHeight: v })} onCommit={commit} />
+      </div>
+      {c.bgEnabled && (
+        <div className="grid grid-cols-2 gap-2.5">
+          <Field label={t('text.bgColor')}><Input type="color" className="h-8 p-1" value={c.bgColor} onChange={(e) => live({ bgColor: e.target.value })} onBlur={commit} /></Field>
+          <RangeField label={t('text.bgOpacity')} value={c.bgOpacity} min={0} max={1} step={0.01} unit="%" onChange={(v) => live({ bgOpacity: v })} onCommit={commit} />
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2.5">
+        <Field label={t('text.outlineColor')}><Input type="color" className="h-8 p-1" value={c.outlineColor} onChange={(e) => live({ outlineColor: e.target.value })} onBlur={commit} /></Field>
+        <RangeField label={t('text.outline')} value={c.outlineWidth} min={0} max={20} step={0.5} unit="pct" onChange={(v) => live({ outlineWidth: v })} onCommit={commit} />
+      </div>
+
+      {(c.shadow || c.reflection) && <SectionTitle>{t('text.effects')}</SectionTitle>}
+      {c.shadow && (
+        <div className="grid grid-cols-2 gap-2.5" data-testid="shadow-controls">
+          <Field label={t('text.shadowColor')}><Input type="color" className="h-8 p-1" value={c.shadowColor} onChange={(e) => live({ shadowColor: e.target.value })} onBlur={commit} /></Field>
+          <RangeField label={t('text.shadowOpacity')} value={c.shadowOpacity} min={0} max={1} step={0.01} unit="%" onChange={(v) => live({ shadowOpacity: v })} onCommit={commit} />
+          <RangeField label={t('text.shadowBlur')} value={c.shadowBlur} min={0} max={100} step={1} unit="pct" onChange={(v) => live({ shadowBlur: v })} onCommit={commit} />
+          <div />
+          <RangeField label={t('text.shadowX')} value={c.shadowX} min={-50} max={50} step={0.5} unit="pct" onChange={(v) => live({ shadowX: v })} onCommit={commit} />
+          <RangeField label={t('text.shadowY')} value={c.shadowY} min={-50} max={50} step={0.5} unit="pct" onChange={(v) => live({ shadowY: v })} onCommit={commit} />
+        </div>
+      )}
+      {c.reflection && (
+        <div className="grid grid-cols-2 gap-2.5" data-testid="reflection-controls">
+          <RangeField label={t('text.reflectionOpacity')} value={c.reflectionOpacity} min={0} max={1} step={0.01} unit="%" onChange={(v) => live({ reflectionOpacity: v })} onCommit={commit} />
+          <RangeField label={t('text.reflectionLength')} value={c.reflectionLength} min={5} max={100} step={1} unit="pct" onChange={(v) => live({ reflectionLength: v })} onCommit={commit} />
+          <RangeField label={t('text.reflectionGap')} value={c.reflectionGap} min={-50} max={100} step={1} unit="pct" onChange={(v) => live({ reflectionGap: v })} onCommit={commit} />
+        </div>
+      )}
+    </>
+  );
+}
+
+function TransitionSelect({ id, value, onChange }: { id?: string; value: TransitionType; onChange: (v: TransitionType) => void }) {
+  const { t } = useI18n();
+  return (
+    <NativeSelect id={id} size="sm" value={value} onChange={(e) => onChange(e.target.value as TransitionType)}>
+      {TRANSITION_GROUPS.map((g) => (
+        <NativeSelectGroup key={g.key} label={t('trans.group.' + g.key)}>
+          {g.types.map((k) => <NativeSelectOption key={k} value={k}>{t('trans.' + k)}</NativeSelectOption>)}
+        </NativeSelectGroup>
+      ))}
+    </NativeSelect>
+  );
+}
+
+/** Transition in/out of a clip; the "in" side is the transition from the clip right before it. */
+function TransitionSection({ clip: c, upd }: { clip: Clip; upd: Upd }) {
+  const { store } = useEditor();
+  const { t } = useI18n();
+  const prev = store.adjacentPrev(c);
+  const prevName = prev ? (prev.kind === 'text' ? prev.text.split('\n')[0] : prev.name || store.media.get(prev.mediaId ?? '')?.name || '?') : '';
+  const applyAll = () => {
+    const targets = store.project.clips.filter((x) => x.id !== c.id && store.getTrack(x.trackId)?.kind === 'video' && store.adjacentPrev(x));
+    if (!targets.length) return;
+    store.pushHistory();
+    for (const x of targets) store.updateClip(x.id, { transIn: { type: c.transIn.type, duration: Math.min(c.transIn.duration, x.duration) } }, { silent: true });
+    store.changed('transitions');
+    toast.success(t('trans.appliedAll', { n: targets.length + (prev ? 1 : 0) }));
+  };
+  return (
+    <div id="transitionSection" className="flex flex-col gap-2.5">
+      <SectionTitle>{t('trans.section')}</SectionTitle>
+      <p className="text-muted-foreground text-xs leading-relaxed" data-testid="trans-between">{prev ? `${t('trans.between')}: ${prevName}` : t('trans.betweenNone')}</p>
+      <div className="grid grid-cols-2 gap-2.5">
+        <Field label={t('trans.in')}><TransitionSelect id="transInType" value={c.transIn.type} onChange={(type) => upd({ transIn: { ...c.transIn, type } })} /></Field>
+        <Field label={t('trans.duration')}><NumberInput value={c.transIn.duration} min={0.1} max={Math.max(0.1, c.duration)} step={0.1} onChange={(v) => upd({ transIn: { ...c.transIn, duration: clamp(v, 0.1, c.duration) } })} /></Field>
+        <Field label={t('trans.out')}><TransitionSelect id="transOutType" value={c.transOut.type} onChange={(type) => upd({ transOut: { ...c.transOut, type } })} /></Field>
+        <Field label={t('trans.duration')}><NumberInput value={c.transOut.duration} min={0.1} max={Math.max(0.1, c.duration)} step={0.1} onChange={(v) => upd({ transOut: { ...c.transOut, duration: clamp(v, 0.1, c.duration) } })} /></Field>
+      </div>
+      {c.transIn.type !== 'none' && <Button size="xs" variant="outline" className="w-fit" onClick={applyAll}>⟋ {t('trans.allJunctions')}</Button>}
+      <p className="text-muted-foreground text-xs leading-relaxed">{t('trans.hint')}</p>
+    </div>
   );
 }

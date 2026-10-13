@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { cn } from '@/lib/utils';
@@ -21,11 +21,15 @@ export function RangeField({ label, value, min, max, step, unit, onChange, onCom
   label: string; value: number; min: number; max: number; step: number; unit?: '%' | 'pct' | '×' | 's' | '';
   onChange: (v: number) => void; onCommit?: (v: number) => void; testId?: string;
 }) {
-  const text = unit === '%' ? Math.round(value * 100) + '%' : unit === 'pct' ? value.toFixed(1) + '%' : value.toFixed(2) + (unit || '');
+  // live edits often skip the store's change event (to keep undo history clean), so the slider keeps
+  // its own value while it is being dragged instead of waiting for a re-render that never comes
+  const [dragging, setDragging] = useState<number | null>(null);
+  const shown = dragging ?? value;
+  const text = unit === '%' ? Math.round(shown * 100) + '%' : unit === 'pct' ? shown.toFixed(1) + '%' : shown.toFixed(2) + (unit || '');
   return (
     <Field label={label}>
       <div className="flex items-center gap-3">
-        <Slider data-testid={testId} className="flex-1" min={min} max={max} step={step} value={[value]} onValueChange={(v) => onChange(v[0])} onValueCommit={(v) => onCommit?.(v[0])} />
+        <Slider data-testid={testId} className="flex-1" min={min} max={max} step={step} value={[shown]} onValueChange={(v) => { setDragging(v[0]); onChange(v[0]); }} onValueCommit={(v) => { setDragging(null); onCommit?.(v[0]); }} />
         <span className="text-muted-foreground w-12 text-right text-xs tabular-nums">{text}</span>
       </div>
     </Field>

@@ -11,6 +11,11 @@
   --ve-text: #a855f7;
   --ve-playhead: #ef4444;
 }
+@media (max-width: 900px) {
+  .veditor { --ve-header-w: 112px; --ve-lane-video-h: 60px; --ve-lane-audio-h: 50px; }
+  .veditor .track-header { padding: 4px 6px; }
+  .veditor .track-header .th-btns button { width: 20px; }
+}
 .ve-media-host { position: fixed; left: -9999px; top: 0; width: 2px; height: 2px; overflow: hidden; opacity: .01; pointer-events: none; }
 
 .veditor .ve-preview-canvas { max-width: 100%; max-height: 100%; background: #000; object-fit: contain; box-shadow: 0 0 0 1px var(--border), 0 10px 40px rgb(0 0 0 / .45); }
@@ -66,6 +71,10 @@
 .veditor .clip .handle.l { left: 0; } .veditor .clip .handle.r { right: 0; }
 .veditor .clip .handle::after { content: ""; position: absolute; top: 30%; bottom: 30%; width: 2px; left: 3px; background: rgb(255 255 255 / .55); border-radius: 1px; }
 .veditor .clip:hover .handle::after, .veditor .clip.selected .handle::after { background: #fff; }
+.veditor .clip .junction { position: absolute; left: 0; bottom: 2px; z-index: 3; width: 18px; height: 18px; padding: 0; border-radius: 4px; border: 1px solid rgb(255 255 255 / .6); background: rgb(0 0 0 / .55); color: #fff; font-size: 11px; line-height: 16px; text-align: center; cursor: pointer; transform: translateX(-50%); margin-left: 9px; }
+.veditor .clip .junction.set { background: #b45309; border-color: #fbbf24; }
+.veditor .clip .junction:hover { background: var(--ve-video); }
+@media (pointer: coarse) { .veditor .clip .junction { width: 24px; height: 24px; line-height: 22px; } .veditor .clip .handle { width: 14px; } }
 .veditor .tl-playhead { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--ve-playhead); z-index: 7; pointer-events: none; }
 .veditor .tl-playhead-cap { position: absolute; top: 0; left: -7px; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 9px solid var(--ve-playhead); }
 .veditor .snap-line { position: absolute; top: 0; bottom: 0; border-left: 1px dashed #fff; z-index: 6; pointer-events: none; }
