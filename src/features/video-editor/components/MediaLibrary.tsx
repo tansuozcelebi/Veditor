@@ -1,11 +1,11 @@
 import { useRef, useState, type DragEvent } from 'react';
-import { Mic, Plus, X } from 'lucide-react';
+import { Mic, Music, Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useEditor, useI18n, useStoreEvents } from '../hooks/useEditor';
 import { useImportFiles } from '../hooks/useImportFiles';
 import { formatBytes, formatDurationShort } from '../engine/state';
-import { ACCEPT_ATTRIBUTE } from '../engine/media';
+import { ACCEPT_ATTRIBUTE, AUDIO_ACCEPT_ATTRIBUTE } from '../engine/media';
 import type { MediaItem } from '../engine/types';
 import { cn } from '@/lib/utils';
 
@@ -18,6 +18,7 @@ export function MediaLibrary({ onAdd, onRecord, onDragStart, selectedId, onSelec
   useStoreEvents(['media']);
   const importFilesFn = useImportFiles();
   const fileInput = useRef<HTMLInputElement>(null);
+  const audioInput = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const items = [...store.media.values()];
 
@@ -28,14 +29,16 @@ export function MediaLibrary({ onAdd, onRecord, onDragStart, selectedId, onSelec
 
   return (
     <aside className="bg-card flex min-h-0 min-w-0 flex-col" id="libraryPanel">
-      <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
         <h2 className="text-sm font-semibold">{t('library.title')}</h2>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           <Button id="btnRecordVoice" variant="outline" size="xs" title={t('record.title')} onClick={onRecord}><Mic /> {t('record.button')}</Button>
-          <Button id="btnImport" size="xs" onClick={() => fileInput.current?.click()}><Plus /> {t('library.import')}</Button>
+          <Button id="btnImportAudio" variant="outline" size="xs" title={t('library.importAudioHint')} onClick={() => audioInput.current?.click()}><Music /> {t('library.importAudio')}</Button>
+          <Button id="btnImport" size="xs" title={t('library.importHint')} onClick={() => fileInput.current?.click()}><Plus /> {t('library.import')}</Button>
         </div>
       </div>
       <input ref={fileInput} type="file" id="fileInput" multiple accept={ACCEPT_ATTRIBUTE} hidden onChange={(e) => { void importFilesFn([...(e.target.files || [])]); e.target.value = ''; }} />
+      <input ref={audioInput} type="file" id="audioFileInput" multiple accept={AUDIO_ACCEPT_ATTRIBUTE} hidden onChange={(e) => { void importFilesFn([...(e.target.files || [])]); e.target.value = ''; }} />
       <div
         id="libraryDrop"
         className={cn('relative flex-1 overflow-auto p-2.5', dragOver && 'drag-over')}

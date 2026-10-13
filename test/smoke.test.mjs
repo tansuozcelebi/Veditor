@@ -586,6 +586,18 @@ try {
     check('project kept and Play works after switching menu pages', r2.playing && r2.t > paused.t + 1.0 && r2.px[2] > 100 && r2.actives === 1, JSON.stringify({ pausedAt: paused.t, r2 }));
     await p2.keyboard.press('Space');
     await p2.screenshot({ path: join(outDir, 'real-user.png') });
+    // the audio-only picker: what a phone needs to reach the music and recordings stored on it
+    const audioAccept = await p2.getAttribute('#audioFileInput', 'accept');
+    const nBefore = await p2.evaluate(() => window.veditor.store.media.size);
+    await p2.setInputFiles('#audioFileInput', [join(fixtures, 'tone.wav')]);
+    await p2.waitForFunction((n) => window.veditor.store.media.size === n + 1, nBefore, { timeout: 20000 }).catch(() => {});
+    const viaAudio = await p2.evaluate(() => [...window.veditor.store.media.values()].map((m) => m.kind));
+    const titles = await p2.evaluate(() => [...document.querySelectorAll('.dv-tab')].map((x) => x.textContent.trim()));
+    check('the Audio File button imports device audio through an audio-only picker',
+      /audio\/\*/.test(audioAccept) && !/video|image/.test(audioAccept) && /\.mp3/.test(audioAccept) && viaAudio.includes('audio') && viaAudio.length === nBefore + 1,
+      JSON.stringify({ audioAccept: audioAccept.slice(0, 40), viaAudio }));
+    check('panels are named Composer / Editor, Import Player and Imported Media',
+      titles.includes('Composer / Editör') && titles.includes('Import Oynatıcı') && titles.includes('İçe Aktarılan Medya'), JSON.stringify(titles));
     check('no page errors (real-user run)', errs2.length === 0, errs2.join(' ; ').slice(0, 500));
   } catch (e) {
     failures++; console.error('❌ real-user run crashed:', e);
