@@ -407,6 +407,21 @@ try {
   await page.keyboard.press('Escape');
   check('the layout menu hides a panel and brings it back', hidden === false && restored === true, JSON.stringify({ hidden, restored }));
 
+  // a panel closed with its own × button must lose its tick in the layout menu too
+  await page.locator('.dv-tab').filter({ hasText: await page.evaluate(() => window.veditor.dock.api.getPanel('source').title) }).first().hover();
+  await page.evaluate(() => { const tab = [...document.querySelectorAll('.dv-tab')].find((el) => el.textContent.includes(window.veditor.dock.api.getPanel('source').title)); tab.querySelector('.dv-default-tab-action').click(); });
+  await page.waitForTimeout(250);
+  await page.click('#btnLayout');
+  await page.waitForSelector('#layoutMenu');
+  const afterX = await page.evaluate(() => ({ panel: !!document.getElementById('sourcePanel'), state: document.querySelector('#layoutMenu [data-panel="source"]').getAttribute('data-state'), others: document.querySelector('#layoutMenu [data-panel="preview"]').getAttribute('data-state') }));
+  await page.click('#layoutMenu [data-panel="source"]');
+  await page.waitForTimeout(250);
+  const backTick = await page.evaluate(() => ({ panel: !!document.getElementById('sourcePanel'), state: document.querySelector('#layoutMenu [data-panel="source"]').getAttribute('data-state') }));
+  await page.keyboard.press('Escape');
+  check('closing a panel with its × clears its tick in the layout menu',
+    afterX.panel === false && afterX.state === 'unchecked' && afterX.others === 'checked' && backTick.panel && backTick.state === 'checked',
+    JSON.stringify({ afterX, backTick }));
+
   // A real drag of a tab, the way a user rearranges the workspace. Playwright's drag support is
   // what drives it: hand-rolled mouse moves depend on the compositor starting a native drag within
   // a guessed delay, which a loaded CI machine does not do. What is asserted is the outcome a user

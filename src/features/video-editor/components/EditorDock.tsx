@@ -91,8 +91,15 @@ export interface DockHandle {
 export function LayoutMenu({ dock }: { dock: DockHandle | null }) {
   const { t } = useI18n();
   const [, refresh] = useReducer((n: number) => n + 1, 0);
+  // a panel closed with its own × (or dragged back in) must update the ticks too, not only the menu's own toggles
+  useEffect(() => {
+    const api = dock?.api;
+    if (!api) return;
+    const subs = [api.onDidAddPanel(refresh), api.onDidRemovePanel(refresh)];
+    return () => subs.forEach((s) => s.dispose());
+  }, [dock]);
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={(open) => { if (open) refresh(); }}>
       <DropdownMenuTrigger asChild>
         <Button id="btnLayout" variant="ghost" size="sm" disabled={!dock} title={t('layout.hint')}><LayoutDashboard /> {t('layout.title')}</Button>
       </DropdownMenuTrigger>
