@@ -27,6 +27,12 @@ const AUDIO_EXT = ['mp3', 'wav', 'wave', 'ogg', 'oga', 'opus', 'm4a', 'm4b', 'aa
 const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'jfif', 'gif', 'webp', 'bmp', 'svg', 'avif', 'heic', 'heif', 'tif', 'tiff', 'ico'];
 /** File-picker filter: MIME groups plus explicit extensions, because the OS maps many camera formats to no MIME type at all. */
 export const ACCEPT_ATTRIBUTE = ['video/*', 'audio/*', 'image/*', ...VIDEO_EXT, ...AUDIO_EXT, ...IMAGE_EXT].map((e) => (e.includes('/') ? e : '.' + e)).join(',');
+/**
+ * Audio only. A phone shown the combined filter above opens its photo gallery, where music and voice
+ * recordings are not to be found; asked for audio alone, Android opens its audio / file picker and iOS
+ * the Files app, so whatever audio is stored on the device can be picked.
+ */
+export const AUDIO_ACCEPT_ATTRIBUTE = ['audio/*', ...AUDIO_EXT].map((e) => (e.includes('/') ? e : '.' + e)).join(',');
 
 export function kindOfFile(file: File): MediaKind | null {
   const type = (file.type || '').toLowerCase();
