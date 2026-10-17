@@ -264,6 +264,34 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
     if (!dock.isOpen('inspector')) dock.toggle('inspector');
     dock.api.getPanel('inspector')?.api.setActive();
   };
+  // Selecting a picture or text layer on the timeline brings its properties into view: the panel is
+  // reopened if it was closed, or brought to the front if it sits behind another tab. On a phone the
+  // panels are tabs and the timeline must stay usable, so nothing switches there. While a pointer is
+  // down (a clip being dragged) the layout is left alone until it is released.
+  useEffect(() => {
+    if (phone || !dock) return;
+    let pointerDown = false, pending = false;
+    const reveal = () => {
+      pending = false;
+      const sel = store.selectedClips();
+      if (sel.length !== 1) return;
+      const c = sel[0];
+      const track = store.getTrack(c.trackId);
+      const visual = c.kind === 'text' || (track?.kind === 'video' && !!c.mediaId && store.media.get(c.mediaId)?.kind !== 'audio');
+      if (!visual) return;
+      if (!dock.isOpen('inspector')) { dock.toggle('inspector'); return; }
+      const panel = dock.api.getPanel('inspector');
+      if (panel && !panel.api.isVisible) panel.api.setActive();
+    };
+    const off = store.on('selection', () => { if (pointerDown) pending = true; else reveal(); });
+    const down = () => { pointerDown = true; };
+    const up = () => { pointerDown = false; if (pending) setTimeout(reveal, 0); };
+    window.addEventListener('pointerdown', down, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', up, true);
+    return () => { off(); window.removeEventListener('pointerdown', down, true); window.removeEventListener('pointerup', up, true); window.removeEventListener('pointercancel', up, true); };
+  }, [phone, dock, store]);
+
   const actions = { split: splitSelected, duplicate: duplicateSelected, detachAudio: detachAudioSelected, deleteSelected, crossfade: crossfadeSelected, addText: () => addTextClip() };
 
   // Every panel is a dockable panel: it can be dragged to another edge, stacked into tabs, resized,

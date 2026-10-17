@@ -439,6 +439,16 @@ try {
     afterX.panel === false && afterX.state === 'unchecked' && afterX.others === 'checked' && backTick.panel && backTick.state === 'checked',
     JSON.stringify({ afterX, backTick }));
 
+  // selecting a picture layer on the timeline brings a closed properties panel back
+  await page.evaluate(() => { window.veditor.store.clearSelection(); window.veditor.dock.api.getPanel('inspector').api.close(); });
+  await page.waitForTimeout(250);
+  const closedFirst = await page.evaluate(() => !document.getElementById('inspectorPanel'));
+  const videoClip = await page.evaluate(() => { const { store } = window.veditor; const c = store.project.clips.find((x) => store.getTrack(x.trackId)?.kind === 'video' && x.kind !== 'text'); return c.id; });
+  await page.locator(`.clip[data-clip-id="${videoClip}"]`).click({ position: { x: 30, y: 30 } });
+  await page.waitForTimeout(400);
+  const reopened = await page.evaluate(() => ({ panel: !!document.getElementById('inspectorPanel'), title: document.getElementById('inspectorTitle')?.textContent, sel: window.veditor.store.selection.clipIds.size }));
+  check('selecting a video clip on the timeline reopens the closed properties panel', closedFirst && reopened.panel && reopened.title === 'Klip' && reopened.sel === 1, JSON.stringify({ closedFirst, ...reopened }));
+
   // A real drag of a tab, the way a user rearranges the workspace. Playwright's drag support is
   // what drives it: hand-rolled mouse moves depend on the compositor starting a native drag within
   // a guessed delay, which a loaded CI machine does not do. What is asserted is the outcome a user
