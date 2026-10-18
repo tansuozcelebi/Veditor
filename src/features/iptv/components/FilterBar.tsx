@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Search, Star, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -9,6 +10,7 @@ import { NativeSelect, NativeSelectOption, NativeSelectGroup } from '@/component
 import { useI18n } from '../engine/i18n';
 import { DEFAULT_SETTINGS, prefs, type SortKey, type ViewSettings } from '../engine/prefs';
 import type { Facet } from '../engine/catalog';
+import { revealFilters } from '../engine/motion';
 
 const SORTS: SortKey[] = ['name', 'name-desc', 'group', 'country', 'recent', 'playlist'];
 
@@ -54,11 +56,14 @@ export function FilterBar({ settings, facets, search, open, onSearch, onChange, 
   const { t } = useI18n();
   // the bar under the player owns this setting on a wide screen; here it is only for narrow ones
   const marked = prefs.unplayableCount();
+  const barRef = useRef<HTMLDivElement>(null);
+  // the drawer's controls drop in when it opens
+  useEffect(() => { if (open) revealFilters(barRef.current?.querySelector('[data-filter-drawer]') ?? null); }, [open]);
   const dirty = (['group', 'category', 'country', 'language'] as const).some((k) => settings[k])
     || settings.onlyFavorites || !settings.hideNsfw || !!search || settings.sort !== DEFAULT_SETTINGS.sort;
 
   return (
-    <div className="flex shrink-0 flex-col gap-2 border-b p-2.5" id="filterBar" data-open={open}>
+    <div ref={barRef} className="flex shrink-0 flex-col gap-2 border-b p-2.5" id="filterBar" data-open={open}>
       <div className="relative">
         <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2" />
         <Input
@@ -72,7 +77,7 @@ export function FilterBar({ settings, facets, search, open, onSearch, onChange, 
         )}
       </div>
 
-      {open && (<>
+      {open && (<div data-filter-drawer className="flex flex-col gap-2">
       <div className="grid grid-cols-2 gap-2">
         <FacetSelect id="filterGroup" label={t('filter.group')} value={settings.group} options={facets.groups} onChange={(group) => onChange({ group })} />
         <FacetSelect id="filterCategory" label={t('filter.category')} value={settings.category} options={facets.categories} onChange={(category) => onChange({ category })} />
@@ -111,7 +116,7 @@ export function FilterBar({ settings, facets, search, open, onSearch, onChange, 
         )}
         {dirty && <Button id="btnClearFilters" size="xs" variant="ghost" className="ml-auto" onClick={onReset}>{t('filter.clear')}</Button>}
       </div>
-      </>)}
+      </div>)}
     </div>
   );
 }

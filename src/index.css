@@ -117,4 +117,11 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Native pull-down lists are drawn by the browser / OS. Without a colour scheme the dark theme's
+     light text lands on the system's white list – white on white. Declaring the scheme makes the
+     browser draw a dark list, and the explicit option colours cover browsers that ignore it. */
+  :root { color-scheme: light; }
+  .dark { color-scheme: dark; }
+  select option, select optgroup { background-color: var(--popover); color: var(--popover-foreground); }
+  select optgroup { color: var(--muted-foreground); font-weight: 600; }
 }

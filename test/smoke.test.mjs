@@ -898,6 +898,18 @@ try {
     const playing = await p5.evaluate(() => { const v = document.getElementById('playerVideo'); return { t: v.currentTime, w: v.videoWidth, title: document.getElementById('playerTitle').textContent }; });
     check('a channel plays', playing.t > 0.3 && playing.w === 640 && playing.title === 'Haber 1', JSON.stringify(playing));
 
+    // the filter pull-downs are drawn dark with light text (they were white on white in the dark theme),
+    // and switching channel introduces it with the "now playing" card
+    const legible = await p5.evaluate(() => {
+      const sel = document.querySelector('#filterBar select'); const opt = sel?.querySelector('option');
+      const lum = (c) => { const m = /oklch\(([\d.]+)/.exec(c) || []; if (m[1]) return +m[1]; const r = /rgba?\((\d+), (\d+), (\d+)/.exec(c); return r ? (0.2126 * r[1] + 0.7152 * r[2] + 0.0722 * r[3]) / 255 : NaN; };
+      const o = opt && getComputedStyle(opt);
+      const card = document.getElementById('nowPlayingCard');
+      return { scheme: sel && getComputedStyle(sel).colorScheme, bg: o && lum(o.backgroundColor), fg: o && lum(o.color), card: !!card && card.textContent.includes('Haber 1') };
+    });
+    check('filter pull-downs are legible in the dark theme, and a switched-to channel is introduced',
+      legible.scheme === 'dark' && legible.bg < 0.4 && legible.fg > 0.8 && legible.card, JSON.stringify(legible));
+
     // ---- recording, then straight into the editor ----
     await p5.click('#btnRecord');
     await p5.waitForSelector('#recBadge', { timeout: 10000 });
