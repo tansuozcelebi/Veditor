@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import type { Channel } from '../engine/catalog';
 import { useI18n } from '../engine/i18n';
 import { canRecord, captureFrom, isMp4, startRecording, startSegmentRecording, toMp4, type Recording } from '../engine/recorder';
+import { switchChannel } from '../engine/motion';
 
 type Status = 'idle' | 'loading' | 'playing' | 'error';
 /** `errPolicy` is this page's own CSP, so it says nothing about the channel itself. */
@@ -24,8 +25,10 @@ const isHls = (url: string) => /\.m3u8(\?|$)/i.test(url);
  * segments through Media Source Extensions. That also makes the picture same-origin, which is what
  * lets the recorder capture it at all.
  */
-export function StreamPlayer({ channel, onSendToEditor, onFailed, onPlaying, className }: {
+export function StreamPlayer({ channel, direction = 0, onSendToEditor, onFailed, onPlaying, className }: {
   channel: Channel | null;
+  /** Which way the switch went (-1 previous, +1 next, 0 picked from the list) – the picture slides in from there. */
+  direction?: number;
   /** Hands a finished recording to the host (the editor page) – hidden when not provided. */
   onSendToEditor?: (file: File) => void | Promise<void>;
   /** The stream was refused, unreachable or undecodable; never fired for the page's own CSP. */
@@ -37,6 +40,12 @@ export function StreamPlayer({ channel, onSendToEditor, onFailed, onPlaying, cla
   const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const directionRef = useRef(direction); directionRef.current = direction;
+  // a new channel slides in and is introduced by a short "now playing" card
+  // keyed on the channel's identity: the object itself is rebuilt whenever preferences are written
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (channel) return switchChannel(videoRef.current, cardRef.current, directionRef.current); }, [channel?.key]);
   const hlsRef = useRef<Hls | null>(null);
   const shareRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<ReturnType<typeof startRecording> | null>(null);
@@ -249,6 +258,16 @@ export function StreamPlayer({ channel, onSendToEditor, onFailed, onPlaying, cla
             <div className="flex justify-center gap-2">
               <Button size="sm" variant="secondary" onClick={() => setAttempt((n) => n + 1)}><RotateCw /> {t('player.retry')}</Button>
               {channel && <Button size="sm" variant="outline" asChild><a href={channel.url} target="_blank" rel="noreferrer"><ExternalLink /> {t('player.open')}</a></Button>}
+            </div>
+          </div>
+        )}
+        {channel && !sharing && (
+          <div ref={cardRef} id="nowPlayingCard" aria-hidden className="pointer-events-none absolute bottom-4 left-4 flex max-w-[70%] items-center gap-3 rounded-lg border border-white/10 bg-black/70 px-3 py-2 text-white shadow-xl backdrop-blur-sm" style={{ visibility: 'hidden', opacity: 0 }}>
+            {channel.logo && <img data-anim src={channel.logo} alt="" className="size-9 shrink-0 rounded bg-white/10 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
+            <div className="min-w-0">
+              <div data-anim className="text-[10px] font-semibold tracking-widest text-red-400 uppercase">● {t('player.nowPlaying')}</div>
+              <div data-anim className="truncate text-base font-semibold">{channel.sortName}</div>
+              <div data-anim className="truncate text-xs text-white/70">{[channel.group, channel.countryName || channel.country, channel.quality].filter(Boolean).join(' · ')}</div>
             </div>
           </div>
         )}

@@ -12,6 +12,7 @@ import { DEFAULT_SOURCES, facets as buildFacets, loadCatalog, type Catalog, type
 import { DEFAULT_SETTINGS, prefs, type ViewSettings } from '../engine/prefs';
 import { canScan, DEFAULT_THREADS, startScan, type ScanHandle, type ScanProgress } from '../engine/prober';
 import { useI18n } from '../engine/i18n';
+import { introPage } from '../engine/motion';
 
 export interface IptvViewerProps {
   /** Where the playlist and the metadata come from; defaults to iptv-org. */
@@ -112,6 +113,11 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
   }, [all, settings, version, selected?.key]);
 
   const play = useCallback((c: Channel) => { setSelected(c); prefs.markPlayed(c.key); }, []);
+  // which way the last switch went, so the picture slides in from that side (0: picked from the list)
+  const [direction, setDirection] = useState(0);
+  const pick = useCallback((c: Channel) => { setDirection(0); play(c); }, [play]);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => (rootRef.current ? introPage(rootRef.current) : undefined), []);
 
   // ---------- stepping through the list ----------
   const index = useMemo(() => (selected ? shown.findIndex((c) => c.key === selected.key) : -1), [shown, selected]);
@@ -121,6 +127,7 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
     if (!shown.length) return;
     const from = index >= 0 ? index : Math.min(anchorRef.current, shown.length - 1) - delta;
     const next = (from + delta + shown.length) % shown.length;   // wraps, so the ends are never dead
+    setDirection(delta);
     play(shown[next]);
   }, [shown, index, play]);
 
@@ -186,7 +193,7 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
   const pct = progress?.total ? `%${Math.round((progress.loaded! / progress.total) * 100)}` : '';
 
   return (
-    <div className={cn('veditor-iptv bg-background text-foreground dark flex h-full min-h-0 w-full min-w-0 overflow-hidden max-[900px]:flex-col', className)}>
+    <div ref={rootRef} className={cn('veditor-iptv bg-background text-foreground dark flex h-full min-h-0 w-full min-w-0 overflow-hidden max-[900px]:flex-col', className)}>
       <aside className="bg-card flex w-[360px] min-w-0 shrink-0 flex-col border-r max-[900px]:order-2 max-[900px]:h-auto max-[900px]:min-h-0 max-[900px]:w-full max-[900px]:flex-1 max-[900px]:border-r-0" id="channelPanel">
         <div className="flex items-center gap-2 border-b px-3 py-2">
           <Tv className="size-4 shrink-0 text-red-500" />
@@ -256,13 +263,13 @@ export function IptvViewer({ sources = DEFAULT_SOURCES, onRecorded, className }:
                 </div>
               )
               : <div className="text-muted-foreground border-b px-3 py-1 text-[11px]" id="channelCount">{t('list.count', { n: shown.length })}</div>}
-            <ChannelList channels={shown} selectedKey={selected?.key ?? null} onSelect={play} favoriteVersion={version} resetKey={listKey} />
+            <ChannelList channels={shown} selectedKey={selected?.key ?? null} onSelect={pick} favoriteVersion={version} resetKey={listKey} />
           </>
         )}
       </aside>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col max-[900px]:order-1 max-[900px]:flex-none max-[900px]:border-b" id="playerColumn">
-        <StreamPlayer channel={selected} onSendToEditor={sendToEditor} onFailed={onFailed} onPlaying={onPlaying} />
+        <StreamPlayer channel={selected} direction={direction} onSendToEditor={sendToEditor} onFailed={onFailed} onPlaying={onPlaying} />
         <ChannelBar
           channel={selected} index={index} total={shown.length} settings={settings} prefsVersion={version}
           onPrev={() => step(-1)} onNext={() => step(1)}

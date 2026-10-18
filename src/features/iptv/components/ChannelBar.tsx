@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { useI18n } from '../engine/i18n';
+import { nudge } from '../engine/motion';
 import { prefs, type ViewSettings } from '../engine/prefs';
 import type { Channel } from '../engine/catalog';
 
@@ -42,13 +43,13 @@ export function ChannelBar({ channel, index, total, settings, prefsVersion, onPr
       data-total={total}
       data-prefs-version={prefsVersion}
     >
-      <Button id="btnPrevChannel" size="sm" variant="outline" disabled={total < 2} title={t('nav.prevHint')} onClick={onPrev}>
+      <Button id="btnPrevChannel" size="sm" variant="outline" disabled={total < 2} title={t('nav.prevHint')} onClick={(e) => { nudge(e.currentTarget, -1); onPrev(); }}>
         <ChevronLeft /> <span className="max-[520px]:hidden">{t('nav.prev')}</span>
       </Button>
       <span className="text-muted-foreground min-w-14 text-center text-xs tabular-nums" id="channelPosition">
         {total ? t('nav.position', { i: index >= 0 ? index + 1 : '–', n: total }) : t('nav.none')}
       </span>
-      <Button id="btnNextChannel" size="sm" variant="outline" disabled={total < 2} title={t('nav.nextHint')} onClick={onNext}>
+      <Button id="btnNextChannel" size="sm" variant="outline" disabled={total < 2} title={t('nav.nextHint')} onClick={(e) => { nudge(e.currentTarget, 1); onNext(); }}>
         <span className="max-[520px]:hidden">{t('nav.next')}</span> <ChevronRight />
       </Button>
 

@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import type { Channel } from '../engine/catalog';
 import { prefs } from '../engine/prefs';
 import { useI18n } from '../engine/i18n';
+import { cascadeRows, markSelected, popStar } from '../engine/motion';
 
 const ROW = 56;
 const OVERSCAN = 8;
@@ -60,6 +61,16 @@ export function ChannelList({ channels, selectedKey, onSelect, favoriteVersion, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedKey]);
 
+  // a new filter or sort order (or the first list to arrive) cascades in, so the change is visible
+  const hasRows = channels.length > 0;
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || !hasRows) return;
+    const raf = requestAnimationFrame(() => cascadeRows(el));
+    return () => cancelAnimationFrame(raf);
+  }, [resetKey, hasRows]);
+  useEffect(() => { markSelected(boxRef.current?.querySelector('.channel-sel') ?? null); }, [selectedKey]);
+
   const first = Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN);
   const visible = channels.slice(first, first + Math.ceil(height / ROW) + OVERSCAN * 2);
 
@@ -95,6 +106,7 @@ export function ChannelList({ channels, selectedKey, onSelect, favoriteVersion, 
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(c); } }}
               title={c.name}
             >
+              {selectedKey === c.key && <div className="channel-sel absolute top-1.5 bottom-1.5 left-0 w-1 origin-center rounded-r bg-red-500" aria-hidden />}
               <div className="bg-muted flex size-9 shrink-0 items-center justify-center overflow-hidden rounded">
                 {c.logo
                   ? <img src={c.logo} alt="" loading="lazy" className="size-full object-contain" onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden'; }} />
@@ -114,7 +126,7 @@ export function ChannelList({ channels, selectedKey, onSelect, favoriteVersion, 
                 className="channel-fav text-muted-foreground hover:text-amber-400 shrink-0 p-1.5"
                 title={t('list.favorite')}
                 aria-pressed={favorite}
-                onClick={(e) => { e.stopPropagation(); prefs.toggleFavorite(c.key); }}
+                onClick={(e) => { e.stopPropagation(); prefs.toggleFavorite(c.key); popStar(e.currentTarget.querySelector('svg'), prefs.isFavorite(c.key)); }}
               >
                 <Star className={cn('size-4', favorite && 'fill-amber-400 text-amber-400')} />
               </button>
