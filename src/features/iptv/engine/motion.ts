@@ -15,7 +15,8 @@ export function introPage(root: HTMLElement) {
   if (reducedMotion()) return () => {};
   const ctx = gsap.context(() => {
     gsap.from('#channelPanel', { x: -28, opacity: 0, duration: 0.5, ease: 'power3.out', clearProps: 'transform,opacity' });
-    gsap.from('#playerColumn', { y: 18, opacity: 0, duration: 0.55, delay: 0.08, ease: 'power3.out', clearProps: 'transform,opacity' });
+    // opacity only: the player's place on the page is measured (and relied on) from the first frame
+    gsap.from('#playerColumn', { opacity: 0, duration: 0.55, delay: 0.08, ease: 'power2.out', clearProps: 'opacity' });
   }, root);
   return () => ctx.revert();
 }

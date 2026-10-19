@@ -11,6 +11,7 @@ import type { Channel } from '../engine/catalog';
 import { useI18n } from '../engine/i18n';
 import { canRecord, captureFrom, isMp4, startRecording, startSegmentRecording, toMp4, type Recording } from '../engine/recorder';
 import { switchChannel } from '../engine/motion';
+import { TimeshiftBar } from './TimeshiftBar';
 
 type Status = 'idle' | 'loading' | 'playing' | 'error';
 /** `errPolicy` is this page's own CSP, so it says nothing about the channel itself. */
@@ -91,7 +92,8 @@ export function StreamPlayer({ channel, direction = 0, onSendToEditor, onFailed,
     };
 
     if (isHls(channel.url) && Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, backBufferLength: 60, manifestLoadingMaxRetry: 2, fragLoadingMaxRetry: 3, levelLoadingMaxRetry: 2 });
+      const hls = new Hls({ enableWorker: true, backBufferLength: 300, // keeps five minutes of what was played, so a live channel can be rewound into it
+ manifestLoadingMaxRetry: 2, fragLoadingMaxRetry: 3, levelLoadingMaxRetry: 2 });
       hlsRef.current = hls;
       hls.on(Hls.Events.MANIFEST_PARSED, () => { void video.play().catch(() => {}); });
       hls.on(Hls.Events.ERROR, (_e, data) => {
@@ -262,7 +264,7 @@ export function StreamPlayer({ channel, direction = 0, onSendToEditor, onFailed,
           </div>
         )}
         {channel && !sharing && (
-          <div ref={cardRef} id="nowPlayingCard" aria-hidden className="pointer-events-none absolute bottom-4 left-4 flex max-w-[70%] items-center gap-3 rounded-lg border border-white/10 bg-black/70 px-3 py-2 text-white shadow-xl backdrop-blur-sm" style={{ visibility: 'hidden', opacity: 0 }}>
+          <div ref={cardRef} id="nowPlayingCard" aria-hidden className="pointer-events-none absolute top-4 left-4 flex max-w-[70%] items-center gap-3 rounded-lg border border-white/10 bg-black/70 px-3 py-2 text-white shadow-xl backdrop-blur-sm" style={{ visibility: 'hidden', opacity: 0 }}>
             {channel.logo && <img data-anim src={channel.logo} alt="" className="size-9 shrink-0 rounded bg-white/10 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
             <div className="min-w-0">
               <div data-anim className="text-[10px] font-semibold tracking-widest text-red-400 uppercase">● {t('player.nowPlaying')}</div>
@@ -271,6 +273,7 @@ export function StreamPlayer({ channel, direction = 0, onSendToEditor, onFailed,
             </div>
           </div>
         )}
+        <TimeshiftBar videoRef={videoRef} hlsRef={hlsRef} enabled={status === 'playing' && !sharing} />
         {sharing && <Badge className="absolute top-3 left-3 bg-blue-600 text-white">{t('share.on')}</Badge>}
         {recordingMs !== null && (
           <Badge className="absolute top-3 right-3 gap-1.5 bg-red-600 text-white" id="recBadge">

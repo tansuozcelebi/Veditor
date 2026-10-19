@@ -17,8 +17,20 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 // Serves the production build (dist/) with an SPA fallback, so the React router route /video-editor resolves.
 const dist = join(root, 'dist');
 if (!existsSync(join(dist, 'index.html'))) { console.error('dist/index.html not found – run `npm run build` first'); process.exit(1); }
+// A live HLS channel for the timeshift checks: the fixture's segments are published one by one, as
+// a broadcaster would, and the playlist never ends (no ENDLIST) – so the player treats it as live.
+const SEGS = [1.666667, 0.833333, 0.833333, 0.833333, 0.833333, 1.0];
+let liveStartedAt = 0;
+function livePlaylist() {
+  if (!liveStartedAt) liveStartedAt = Date.now();
+  const n = Math.min(SEGS.length, 2 + Math.floor((Date.now() - liveStartedAt) / 900));
+  return ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:2', '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-MAP:URI="init.mp4"',
+    ...SEGS.slice(0, n).flatMap((d, i) => [`#EXTINF:${d.toFixed(6)},`, `seg${String(i).padStart(3, '0')}.m4s`]), ''].join('\n');
+}
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
+  if (p === '/iptv/hls/live.m3u8') { res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' }); res.end(livePlaylist()); return; }
+  if (p === '/iptv/dvr.m3u') { res.writeHead(200, { 'Content-Type': 'application/x-mpegurl' }); res.end('#EXTM3U\n#EXTINF:-1 tvg-id="Dvr1.tr@HD" group-title="Test",Canli DVR\n/iptv/hls/live.m3u8\n'); return; }
   // a stand-in for iptv-org: the playlist and its metadata, plus the fixture clips they point at
   let f = p.startsWith('/iptv/') ? join(fixtures, p.slice(1))
     : p.startsWith('/media/') ? join(fixtures, p.slice('/media/'.length))
@@ -1175,6 +1187,43 @@ try {
     } finally {
       await tv2.screenshot({ path: join(outDir, 'live-tv-scan.png') }).catch(() => {});
       await tv2.close();
+    }
+
+    // ---- timeshift: a live HLS channel can be paused and rewound, and shows the broadcast moving on ----
+    const tv3 = await b5.newPage({ viewport: { width: 1400, height: 900 }, locale: 'tr-TR' });
+    const errs7 = [];
+    tv3.on('pageerror', (e) => errs7.push(e.message));
+    try {
+      await tv3.goto(`${base}/player?playlist=/iptv/dvr.m3u&api=`);
+      await tv3.waitForSelector('#channelList .channel-row', { timeout: 60000 });
+      await tv3.click('.channel-row >> text=Canli DVR');
+      await tv3.waitForSelector('#timeshiftBar[data-live="true"]', { timeout: 30000 });
+      await tv3.waitForTimeout(4500);                      // let the whole window get published
+      const bar = () => tv3.evaluate(() => { const b = document.getElementById('timeshiftBar'); const v = document.getElementById('playerVideo');
+        return { live: b.dataset.live, atLive: b.dataset.atLive, paused: b.dataset.paused, behind: +b.dataset.behind, range: +b.dataset.range, t: +v.currentTime.toFixed(2),
+          ahead: !!document.getElementById('timeshiftAhead'), moving: !!document.querySelector('#timeshiftAhead.ts-ahead-moving'), label: document.getElementById('tsBehind')?.textContent ?? '', badge: !!document.getElementById('tsLiveBadge') }; });
+      const playing = await bar();
+      await tv3.click('#btnTsPlay');                       // pause
+      await tv3.waitForTimeout(600);
+      const paused1 = await bar();
+      await tv3.waitForTimeout(4000);
+      const paused2 = await bar();
+      check('a paused live channel shows the broadcast moving on without the viewer',
+        playing.live === 'true' && paused1.paused === 'true' && paused2.behind > paused1.behind + 2.5 && paused2.atLive === 'false' && paused2.ahead && paused2.moving && /Duraklatıldı/.test(paused2.label),
+        JSON.stringify({ playing, paused1, paused2 }));
+      await tv3.click('#btnTsBack');                       // rewind within what is buffered
+      await tv3.waitForTimeout(400);
+      const rewound = await bar();
+      await tv3.click('#btnGoLive');
+      await tv3.waitForTimeout(1200);
+      const back = await bar();
+      check('a live channel can be rewound, and "go live" catches up again',
+        rewound.t < paused2.t - 0.3 && back.paused === 'false' && back.atLive === 'true' && back.badge,
+        JSON.stringify({ rewound, back }));
+      check('no page errors (timeshift run)', errs7.length === 0, errs7.join(' ; ').slice(0, 300));
+    } finally {
+      await tv3.screenshot({ path: join(outDir, 'live-tv-timeshift.png') }).catch(() => {});
+      await tv3.close();
     }
 
     check('no page errors (live TV run)', errs5.length === 0, errs5.join(' ; ').slice(0, 300));

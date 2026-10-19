@@ -125,3 +125,10 @@
   select option, select optgroup { background-color: var(--popover); color: var(--popover-foreground); }
   select optgroup { color: var(--muted-foreground); font-weight: 600; }
 }
+
+/* Live TV timeshift: the stretch between the viewer's position and the live edge. While paused it
+   streams forward, so it is plain that the broadcast carries on without the viewer. */
+.ts-ahead { background: repeating-linear-gradient(-45deg, rgb(239 68 68 / .55) 0 6px, rgb(239 68 68 / .2) 6px 12px); background-size: 17px 100%; }
+.ts-ahead-moving { animation: ts-ahead-flow .7s linear infinite; }
+@keyframes ts-ahead-flow { to { background-position: 17px 0; } }
+@media (prefers-reduced-motion: reduce) { .ts-ahead-moving { animation: none; } }
