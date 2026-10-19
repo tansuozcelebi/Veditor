@@ -1232,7 +1232,7 @@ try {
 
       // a channel that will not play gets a third way out: the address in a frame on this page
       await tv3.click('.channel-row >> text=Web Oynatici');
-      await tv3.waitForSelector('#playerError', { timeout: 30000 });
+      await tv3.waitForFunction(() => document.getElementById('playerTitle')?.textContent === 'Web Oynatici' && !!document.querySelector('#playerError #btnFrame'), null, { timeout: 30000 });
       const offered = await tv3.evaluate(() => ({ buttons: document.querySelectorAll('#playerError button, #playerError a').length, disabled: document.getElementById('btnFrame')?.disabled }));
       await tv3.click('#btnFrame');
       await tv3.waitForSelector('#playerFrame', { timeout: 10000 });
@@ -1243,7 +1243,8 @@ try {
       const closed = await tv3.evaluate(() => ({ frame: !!document.getElementById('playerFrame'), error: !!document.getElementById('playerError') }));
       // an HLS address in a browser without native HLS cannot be framed, and says why
       await tv3.click('.channel-row >> text=Kapali HLS');
-      await tv3.waitForSelector('#playerError', { timeout: 30000 });
+      // the previous channel's error panel is still up for a moment: wait for this channel's own
+      await tv3.waitForFunction(() => document.getElementById('playerTitle')?.textContent === 'Kapali HLS' && !!document.querySelector('#playerError #btnFrame'), null, { timeout: 30000 });
       const hlsFrame = await tv3.evaluate(() => ({ native: !!document.createElement('video').canPlayType('application/vnd.apple.mpegurl'), disabled: document.getElementById('btnFrame')?.disabled, note: document.getElementById('frameUnavailable')?.textContent ?? '' }));
       check('a failed channel can be tried in a frame on the page, which plays a web-player page',
         offered.buttons === 3 && offered.disabled === false && !!inFrame && inFrame.t > 0.5 && inFrame.w === 640 && !closed.frame && closed.error
