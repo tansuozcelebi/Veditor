@@ -1173,8 +1173,9 @@ try {
       await tv2.waitForSelector('#channelList .channel-row', { timeout: 60000 });
       const beforeScan = await tv2.textContent('#channelCount');
       await tv2.click('#btnScan');
-      await tv2.waitForSelector('#scanProgress', { timeout: 15000 });
-      const running = await tv2.evaluate(() => document.getElementById('scanProgress').textContent.replace(/\s+/g, ' ').trim());
+      // three channels can be swept in a moment, so the progress line is read the instant it appears –
+      // a separate read afterwards could find it already gone
+      const running = await tv2.waitForFunction(() => document.getElementById('scanProgress')?.textContent.replace(/\s+/g, ' ').trim() || null, null, { timeout: 15000, polling: 'raf' }).then((h) => h.jsonValue());
       await tv2.waitForSelector('#channelCount', { timeout: 120000 });
       await tv2.waitForTimeout(600);
       const swept = await tv2.evaluate(() => ({
