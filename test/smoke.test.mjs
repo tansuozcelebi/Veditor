@@ -30,7 +30,15 @@ function livePlaylist() {
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   if (p === '/iptv/hls/live.m3u8') { res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' }); res.end(livePlaylist()); return; }
-  if (p === '/iptv/dvr.m3u') { res.writeHead(200, { 'Content-Type': 'application/x-mpegurl' }); res.end('#EXTM3U\n#EXTINF:-1 tvg-id="Dvr1.tr@HD" group-title="Test",Canli DVR\n/iptv/hls/live.m3u8\n'); return; }
+  if (p === '/iptv/dvr.m3u') {
+    res.writeHead(200, { 'Content-Type': 'application/x-mpegurl' });
+    res.end('#EXTM3U\n#EXTINF:-1 tvg-id="Dvr1.tr@HD" group-title="Test",Canli DVR\n/iptv/hls/live.m3u8\n'
+      + '#EXTINF:-1 tvg-id="Web1.tr" group-title="Test",Web Oynatici\n/iptv/webplayer.html\n'
+      + '#EXTINF:-1 tvg-id="Kapali1.tr" group-title="Test",Kapali HLS\nhttps://stream.invalid/live/index.m3u8\n');
+    return;
+  }
+  // a channel whose address is a web-player page rather than a stream: only a frame can show it
+  if (p === '/iptv/webplayer.html') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<!doctype html><body style="margin:0;background:#000"><video id="v" src="/media/clipA.webm" autoplay muted playsinline style="width:100%"></video></body>'); return; }
   // a stand-in for iptv-org: the playlist and its metadata, plus the fixture clips they point at
   let f = p.startsWith('/iptv/') ? join(fixtures, p.slice(1))
     : p.startsWith('/media/') ? join(fixtures, p.slice('/media/'.length))
@@ -1165,8 +1173,9 @@ try {
       await tv2.waitForSelector('#channelList .channel-row', { timeout: 60000 });
       const beforeScan = await tv2.textContent('#channelCount');
       await tv2.click('#btnScan');
-      await tv2.waitForSelector('#scanProgress', { timeout: 15000 });
-      const running = await tv2.evaluate(() => document.getElementById('scanProgress').textContent.replace(/\s+/g, ' ').trim());
+      // three channels can be swept in a moment, so the progress line is read the instant it appears –
+      // a separate read afterwards could find it already gone
+      const running = await tv2.waitForFunction(() => document.getElementById('scanProgress')?.textContent.replace(/\s+/g, ' ').trim() || null, null, { timeout: 15000, polling: 'raf' }).then((h) => h.jsonValue());
       await tv2.waitForSelector('#channelCount', { timeout: 120000 });
       await tv2.waitForTimeout(600);
       const swept = await tv2.evaluate(() => ({
@@ -1220,10 +1229,57 @@ try {
       check('a live channel can be rewound, and "go live" catches up again',
         rewound.t < paused2.t - 0.3 && back.paused === 'false' && back.atLive === 'true' && back.badge,
         JSON.stringify({ rewound, back }));
+
+      // a channel that will not play gets a third way out: the address in a frame on this page
+      await tv3.click('.channel-row >> text=Web Oynatici');
+      await tv3.waitForFunction(() => document.getElementById('playerTitle')?.textContent === 'Web Oynatici' && !!document.querySelector('#playerError #btnFrame'), null, { timeout: 30000 });
+      const offered = await tv3.evaluate(() => ({ buttons: document.querySelectorAll('#playerError button, #playerError a').length, disabled: document.getElementById('btnFrame')?.disabled }));
+      await tv3.click('#btnFrame');
+      await tv3.waitForSelector('#playerFrame', { timeout: 10000 });
+      await tv3.waitForTimeout(2000);
+      const frame = tv3.frames().find((f) => f.url().endsWith('/iptv/webplayer.html'));
+      const inFrame = frame ? await frame.evaluate(() => { const v = document.getElementById('v'); return { t: +v.currentTime.toFixed(1), w: v.videoWidth }; }) : null;
+      await tv3.click('#btnFrameClose');
+      const closed = await tv3.evaluate(() => ({ frame: !!document.getElementById('playerFrame'), error: !!document.getElementById('playerError') }));
+      // an HLS address in a browser without native HLS cannot be framed, and says why
+      await tv3.click('.channel-row >> text=Kapali HLS');
+      // the previous channel's error panel is still up for a moment: wait for this channel's own
+      await tv3.waitForFunction(() => document.getElementById('playerTitle')?.textContent === 'Kapali HLS' && !!document.querySelector('#playerError #btnFrame'), null, { timeout: 30000 });
+      const hlsFrame = await tv3.evaluate(() => ({ native: !!document.createElement('video').canPlayType('application/vnd.apple.mpegurl'), disabled: document.getElementById('btnFrame')?.disabled, note: document.getElementById('frameUnavailable')?.textContent ?? '' }));
+      check('a failed channel can be tried in a frame on the page, which plays a web-player page',
+        offered.buttons === 3 && offered.disabled === false && !!inFrame && inFrame.t > 0.5 && inFrame.w === 640 && !closed.frame && closed.error
+          && (hlsFrame.native ? hlsFrame.disabled === false : hlsFrame.disabled === true && /HLS/.test(hlsFrame.note)),
+        JSON.stringify({ offered, inFrame, closed, hlsFrame }));
       check('no page errors (timeshift run)', errs7.length === 0, errs7.join(' ; ').slice(0, 300));
     } finally {
       await tv3.screenshot({ path: join(outDir, 'live-tv-timeshift.png') }).catch(() => {});
       await tv3.close();
+    }
+
+    // ---- the timeshift bar on a phone: inside the picture, every control reachable, nothing off-screen ----
+    const tvm = await b5.newPage({ ...devices['Pixel 7'], locale: 'tr-TR' });
+    try {
+      await tvm.goto(`${base}/player?playlist=/iptv/dvr.m3u&api=`);
+      await tvm.waitForSelector('#channelList .channel-row', { timeout: 60000 });
+      await tvm.click('.channel-row >> text=Canli DVR');
+      await tvm.waitForSelector('#timeshiftBar[data-live="true"]', { timeout: 30000 });
+      await tvm.waitForTimeout(1500);
+      await tvm.tap('#btnTsPlay');
+      await tvm.waitForTimeout(4500);
+      const m = await tvm.evaluate(() => {
+        const r = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height), r: Math.round(b.right) }; };
+        const stage = r(document.getElementById('playerStage')), bar = r(document.getElementById('timeshiftBar'));
+        const controls = ['btnTsPlay', 'btnTsBack', 'btnTsFwd', 'timeshiftTrack', 'btnGoLive'].map((id) => ({ id, ...r(document.getElementById(id)) }));
+        return { vw: innerWidth, stage, bar, controls, paused: document.getElementById('timeshiftBar').dataset.paused, label: document.getElementById('tsBehind')?.textContent ?? '', overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+      });
+      const inside = m.controls.every((c) => c.w > 0 && c.x >= 0 && c.r <= m.vw && c.y >= m.stage.y && c.y + c.h <= m.stage.y + m.stage.h);
+      const track = m.controls.find((c) => c.id === 'timeshiftTrack');
+      check('on a phone the timeshift bar fits the picture, with every control reachable',
+        m.paused === 'true' && inside && track.w > 150 && m.bar.y + m.bar.h <= m.stage.y + m.stage.h && m.overflowX === 0 && /Duraklatıldı/.test(m.label),
+        JSON.stringify(m));
+      await tvm.screenshot({ path: join(outDir, 'live-tv-timeshift-phone.png') }).catch(() => {});
+    } finally {
+      await tvm.close();
     }
 
     check('no page errors (live TV run)', errs5.length === 0, errs5.join(' ; ').slice(0, 300));
