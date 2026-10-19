@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Circle, Copy, ExternalLink, Maximize2, MonitorUp, PictureInPicture2, RotateCw, Square, Volume2, VolumeX } from 'lucide-react';
+import { AppWindow, Circle, Copy, ExternalLink, Maximize2, MonitorUp, PictureInPicture2, RotateCw, Square, Volume2, VolumeX } from 'lucide-react';
 import Hls from 'hls.js';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,20 @@ type Status = 'idle' | 'loading' | 'playing' | 'error';
 export type ErrorKind = 'errCors' | 'errNetwork' | 'errMedia' | 'errPolicy';
 
 const isHls = (url: string) => /\.m3u8(\?|$)/i.test(url);
+
+/**
+ * Whether a channel can be tried in a frame on this page. A frame loads the address as its own
+ * document, so the broadcaster's CORS policy no longer matters: a web-player page or a plain video
+ * file plays there, and so does an HLS playlist in a browser that decodes HLS itself (Safari, Chrome
+ * on Android). Two things a frame cannot get round: an http:// address on an https:// page (mixed
+ * content is blocked outright), and HLS in a browser that cannot play it natively – the frame would
+ * only offer the playlist as a download.
+ */
+function frameSupport(url: string): { ok: true } | { ok: false; reason: 'insecure' | 'noHls' } {
+  if (typeof location !== 'undefined' && location.protocol === 'https:' && /^http:/i.test(url)) return { ok: false, reason: 'insecure' };
+  if (isHls(url) && typeof document !== 'undefined' && !document.createElement('video').canPlayType('application/vnd.apple.mpegurl')) return { ok: false, reason: 'noHls' };
+  return { ok: true };
+}
 
 /**
  * Plays one channel, shares the screen, and records either of them.
@@ -61,6 +75,9 @@ export function StreamPlayer({ channel, direction = 0, onSendToEditor, onFailed,
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [attempt, setAttempt] = useState(0);
+  /** The channel is shown in a frame instead of the player (the third way out of a failed stream). */
+  const [framed, setFramed] = useState(false);
+  useEffect(() => { setFramed(false); }, [channel?.key]);
 
   // Kept in a ref so a caller that passes fresh closures cannot restart the stream: the channel
   // effect only registers listeners, which read the ref long after this has run.
@@ -253,14 +270,23 @@ export function StreamPlayer({ channel, direction = 0, onSendToEditor, onFailed,
         />
         {status === 'idle' && !sharing && <p className="text-muted-foreground absolute text-sm" id="playerIdle">{t('player.idle')}</p>}
         {status === 'loading' && <p className="absolute text-sm text-white/80" id="playerLoading">{t('player.loading')}</p>}
-        {status === 'error' && (
+        {status === 'error' && !framed && (
           <div className="absolute max-w-md p-6 text-center" id="playerError">
             <p className="mb-1 font-semibold text-red-400">{t('player.error')}</p>
             <p className="mb-3 text-sm text-white/80">{t(`player.${errorKind}`)}</p>
             <div className="flex justify-center gap-2">
               <Button size="sm" variant="secondary" onClick={() => setAttempt((n) => n + 1)}><RotateCw /> {t('player.retry')}</Button>
               {channel && <Button size="sm" variant="outline" asChild><a href={channel.url} target="_blank" rel="noreferrer"><ExternalLink /> {t('player.open')}</a></Button>}
+              {channel && (() => {
+                const fs = frameSupport(channel.url);
+                return (
+                  <Button id="btnFrame" size="sm" variant="outline" disabled={!fs.ok} title={fs.ok ? t('frame.hint') : t('frame.no.' + fs.reason)} onClick={() => setFramed(true)}>
+                    <AppWindow /> {t('frame.try')}
+                  </Button>
+                );
+              })()}
             </div>
+            {channel && !frameSupport(channel.url).ok && <p className="mt-2 text-[11px] text-white/50" id="frameUnavailable">{t('frame.no.' + (frameSupport(channel.url) as { reason: string }).reason)}</p>}
           </div>
         )}
         {channel && !sharing && (
@@ -271,6 +297,21 @@ export function StreamPlayer({ channel, direction = 0, onSendToEditor, onFailed,
               <div data-anim className="truncate text-base font-semibold">{channel.sortName}</div>
               <div data-anim className="truncate text-xs text-white/70">{[channel.group, channel.countryName || channel.country, channel.quality].filter(Boolean).join(' · ')}</div>
             </div>
+          </div>
+        )}
+        {framed && channel && (
+          <div className="absolute inset-0 z-20 flex flex-col bg-black" id="playerFramed">
+            <div className="flex items-center gap-2 bg-black/80 px-3 py-1.5 text-[11px] text-white/80">
+              <AppWindow className="size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{t('frame.on')}</span>
+              <Button id="btnFrameClose" size="xs" variant="secondary" onClick={() => setFramed(false)}>{t('frame.close')}</Button>
+            </div>
+            {/* sandboxed: the channel's page may run its player, but not navigate this page away or start downloads */}
+            <iframe
+              id="playerFrame" title={channel.sortName} src={channel.url} className="min-h-0 w-full flex-1 border-0 bg-black"
+              allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen referrerPolicy="no-referrer"
+              sandbox="allow-scripts allow-same-origin allow-presentation allow-forms"
+            />
           </div>
         )}
         <TimeshiftBar videoRef={videoRef} hlsRef={hlsRef} enabled={status === 'playing' && !sharing} />

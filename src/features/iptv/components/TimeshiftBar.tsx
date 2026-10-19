@@ -166,11 +166,14 @@ export function TimeshiftBar({ videoRef, hlsRef, enabled, className }: {
             ? <span id="tsLiveBadge" className="inline-flex items-center gap-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-white"><Radio className="size-3" /> {t('ts.live')}</span>
             : (
               <>
-                <span id="tsBehind" className={cn('text-white/80 max-[520px]:max-w-24 max-[520px]:truncate', tl.paused && 'text-amber-300')} title={t('ts.behind', { t: formatTime(behind, { ms: false }) })}>
-                  {tl.paused ? t('ts.pausedBehind', { t: formatTime(behind, { ms: false }) }) : `−${formatTime(behind, { ms: false })}`}
+                <span id="tsBehind" className={cn('text-white/80', tl.paused && 'text-amber-300')} title={t('ts.behind', { t: formatTime(behind, { ms: false }) })}>
+                  {/* on a phone the words give way to the track; the count and the moving stripe still say it */}
+                  {tl.paused && <span className="max-[640px]:hidden">{t('ts.pausedLabel')} </span>}
+                  {tl.paused && <Pause className="mr-0.5 inline size-3 min-[641px]:hidden" aria-hidden />}
+                  −{formatTime(behind, { ms: false })}
                 </span>
-                <Button id="btnGoLive" size="xs" variant="outline" className="border-red-500/60 text-red-400 hover:text-red-300" onClick={goLive}>
-                  <Radio /> {t('ts.goLive')}
+                <Button id="btnGoLive" size="xs" variant="outline" className="border-red-500/60 text-red-400 hover:text-red-300 max-[640px]:px-1.5" onClick={goLive} title={t('ts.goLive')}>
+                  <Radio /> <span className="max-[640px]:hidden">{t('ts.goLive')}</span>
                 </Button>
               </>
             )
