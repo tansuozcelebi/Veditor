@@ -21,7 +21,7 @@ export function OpenProjectDialog({ data, onOpenChange }: { data: ProjectFile | 
     if (!data) return;
     const project = data.project;
     let dropped = 0;
-    project.clips = (project.clips || []).filter((c) => { if (c.kind === 'text') return true; const hit = c.mediaId ? current.get(c.mediaId) : null; if (!hit) { dropped++; return false; } c.mediaId = hit.id; return true; });
+    project.clips = (project.clips || []).filter((c) => { if (c.kind === 'text' || c.kind === 'magnifier') return true; const hit = c.mediaId ? current.get(c.mediaId) : null; if (!hit) { dropped++; return false; } c.mediaId = hit.id; return true; });
     store.loadProject(project);
     toast.success(t('project.loaded', { n: project.clips.length }));
     if (dropped) toast.error(t('project.missingDropped', { n: dropped }));

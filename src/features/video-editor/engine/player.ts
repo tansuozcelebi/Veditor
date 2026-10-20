@@ -1,6 +1,7 @@
 // ===================== Playback engine: canvas compositor + Web Audio mixer =====================
 import { clamp, type Store } from './state';
 import { ensureFont } from './fonts';
+import { animatedAt } from './keyframes';
 import type { Clip, Track, TransitionType } from './types';
 
 export interface MediaNode { el: HTMLVideoElement | HTMLAudioElement | HTMLImageElement | null; gain: GainNode | null; src?: MediaElementAudioSourceNode; kind: string; mediaId: string; trackId: string | null; ready: boolean; lastSeek: number }
@@ -16,6 +17,10 @@ export interface TransitionFx {
   overlay: { color: string; alpha: number } | null;
 }
 export interface Rect { x: number; y: number; w: number; h: number }
+/** Where a layer sits: its rectangle before rotation, the rotation (degrees) around its centre, and – for cropped media – the uncropped picture. */
+export interface LayerFrame extends Rect { rotation: number; full: Rect | null }
+/** A cropped media layer: the part of the source drawn, and where (`crop`), inside the uncropped picture (`full`). */
+interface MediaGeom { full: Rect; crop: Rect; sx: number; sy: number; sw: number; sh: number; el: CanvasImageSource }
 interface TextLayout { lines: string[]; fontPx: number; lh: number; blockW: number; blockH: number; cx: number; cy: number; left: number; pad: number; bx: number; by: number; bw: number; bh: number }
 
 const blankFx = (): TransitionFx => ({ alpha: 1, dx: 0, dy: 0, scale: 1, scaleX: 1, rotate: 0, wipe: null, shape: null, blur: 0, pixel: 0, overlay: null });
@@ -121,6 +126,7 @@ export class Player extends Emitter {
   private _attached = false;
   private _pixCanvas: HTMLCanvasElement | null = null;
   private _reflCanvas: HTMLCanvasElement | null = null;
+  private _magCanvas: HTMLCanvasElement | null = null;
   constructor(store: Store, canvas: HTMLCanvasElement, host: HTMLElement) {
     super();
     this.store = store;
@@ -504,7 +510,36 @@ export class Player extends Emitter {
       g.scale(fx.scale * fx.scaleX, fx.scale);
       g.translate(-cx, -cy);
     }
-    if (fx.blur > 0.5 && 'filter' in g) g.filter = `blur(${Math.round(fx.blur * (dest.w / 1920))}px)`;
+  }
+
+  /** Colour adjustments and blur of a layer (and of its transition) as a canvas filter. */
+  _setFilter(g: CanvasRenderingContext2D, c: Clip, fx: TransitionFx, dest: Rect) {
+    if (!('filter' in g)) return;
+    const f: string[] = [];
+    if (c.brightness !== 100) f.push(`brightness(${c.brightness}%)`);
+    if (c.contrast !== 100) f.push(`contrast(${c.contrast}%)`);
+    if (c.saturation !== 100) f.push(`saturate(${c.saturation}%)`);
+    if (c.hue) f.push(`hue-rotate(${c.hue}deg)`);
+    if (c.sepia) f.push(`sepia(${c.sepia}%)`);
+    if (c.grayscale) f.push(`grayscale(${c.grayscale}%)`);
+    // the layer's blur is in tenths of a percent of the frame height, so it looks the same at any resolution
+    const blur = (c.blur || 0) / 1000 * dest.h + (fx.blur > 0.5 ? fx.blur * (dest.w / 1920) : 0);
+    if (blur > 0.3) f.push(`blur(${Math.round(blur * 10) / 10}px)`);
+    g.filter = f.length ? f.join(' ') : 'none';
+  }
+
+  /** Blend mode of a layer. */
+  _setBlend(g: CanvasRenderingContext2D, c: Clip) {
+    g.globalCompositeOperation = !c.blendMode || c.blendMode === 'normal' ? 'source-over' : c.blendMode;
+  }
+
+  /** Rotate and mirror the context around a point (inside save/restore). */
+  _orient(g: CanvasRenderingContext2D, cx: number, cy: number, rotation: number, flipH: boolean, flipV: boolean) {
+    if (!rotation && !flipH && !flipV) return;
+    g.translate(cx, cy);
+    if (rotation) g.rotate((rotation * Math.PI) / 180);
+    if (flipH || flipV) g.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+    g.translate(-cx, -cy);
   }
 
   render(t: number) {
@@ -557,47 +592,113 @@ export class Player extends Emitter {
     return { x: cx - dw / 2, y: cy - dh / 2, w: dw, h: dh, el: el as CanvasImageSource };
   }
 
+  /**
+   * The cropped part of a media layer: which part of the source is drawn and where. The crop does not
+   * move or resize what is left – it cuts it out of the picture in place, as in After Effects – and
+   * a mirrored layer is cut on the mirrored side.
+   */
+  _mediaGeom(clip: Clip, dest: Rect, forceContain: boolean): MediaGeom | null {
+    const r = this._mediaRect(clip, dest, forceContain);
+    if (!r) return null;
+    const el = r.el as HTMLVideoElement | HTMLImageElement;
+    const nw = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth, nh = el instanceof HTMLVideoElement ? el.videoHeight : el.naturalHeight;
+    const k = cropOf(clip);
+    const left = clip.flipH ? k.r : k.l, top = clip.flipV ? k.b : k.t;
+    return {
+      full: { x: r.x, y: r.y, w: r.w, h: r.h },
+      crop: { x: r.x + r.w * left, y: r.y + r.h * top, w: r.w * k.w, h: r.h * k.h },
+      sx: nw * k.l, sy: nh * k.t, sw: Math.max(1, nw * k.w), sh: Math.max(1, nh * k.h), el: r.el,
+    };
+  }
+
+  /** Centre and radius of a magnifier's lens. */
+  _lens(clip: Clip, dest: Rect, forceContain: boolean) {
+    const scale = forceContain ? 1 : clip.scale, ox = forceContain ? 0 : clip.x, oy = forceContain ? 0 : clip.y;
+    return { cx: dest.x + dest.w / 2 + (ox / 100) * dest.w, cy: dest.y + dest.h / 2 + (oy / 100) * dest.h, r: Math.max(2, dest.h * (clip.magSize / 100) * scale) };
+  }
+
   /** The topmost visible layer under a point of the composition (project pixels), or null. */
   hitTest(px: number, py: number, t: number = this.currentTime): Clip | null {
     const visual = this._visualClips(t).filter((v) => !v.extended).reverse(); // top layer first
     for (const { clip } of visual) {
-      const b = this.clipBounds(clip);
-      if (b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return clip;
+      const b = this.clipFrame(clip, t);
+      if (!b) continue;
+      // into the layer's own (unrotated) coordinates
+      const cx = b.x + b.w / 2, cy = b.y + b.h / 2, a = (-b.rotation * Math.PI) / 180;
+      const lx = cx + (px - cx) * Math.cos(a) - (py - cy) * Math.sin(a), ly = cy + (px - cx) * Math.sin(a) + (py - cy) * Math.cos(a);
+      if (lx >= b.x && lx <= b.x + b.w && ly >= b.y && ly <= b.y + b.h) return clip;
     }
     return null;
   }
 
-  /** The rectangle a clip occupies in the composition (project pixels), for on-canvas editing. */
-  clipBounds(clip: Clip): Rect | null {
-    const dest = { x: 0, y: 0, w: this.store.project.width, h: this.store.project.height };
-    if (clip.kind === 'text') {
-      const L = this._textLayout(clip, dest, false);
-      return L ? { x: L.bx, y: L.by, w: L.bw, h: L.bh } : null;
-    }
-    const r = this._mediaRect(clip, dest, false);
-    if (r) return { x: r.x, y: r.y, w: r.w, h: r.h };
-    // not decoded yet: fall back to the media's own aspect ratio
-    const m = clip.mediaId ? this.store.media.get(clip.mediaId) : null;
-    if (!m || !m.width || !m.height) return null;
-    const k = Math.min(dest.w / m.width, dest.h / m.height) * clip.scale;
-    const w = clip.fit === 'stretch' ? dest.w * clip.scale : m.width * k, h = clip.fit === 'stretch' ? dest.h * clip.scale : m.height * k;
-    return { x: dest.w / 2 + (clip.x / 100) * dest.w - w / 2, y: dest.h / 2 + (clip.y / 100) * dest.h - h / 2, w, h };
+  /** The rectangle a clip occupies in the composition (project pixels, before rotation), for on-canvas editing. */
+  clipBounds(clip: Clip, t: number = this.currentTime): Rect | null {
+    const f = this.clipFrame(clip, t);
+    return f ? { x: f.x, y: f.y, w: f.w, h: f.h } : null;
   }
 
-  _drawClip(clip: Clip, dest: Rect, forceContain: boolean, t: number = this.currentTime, next?: Clip) {
+  /** Where a layer is at time t (animation applied): its rectangle, rotation and uncropped picture. */
+  clipFrame(clip: Clip, t: number = this.currentTime): LayerFrame | null {
+    const c = animatedAt(clip, t);
+    const dest = { x: 0, y: 0, w: this.store.project.width, h: this.store.project.height };
+    if (c.kind === 'text') {
+      const L = this._textLayout(c, dest, false);
+      return L ? { x: L.bx, y: L.by, w: L.bw, h: L.bh, rotation: c.rotation, full: null } : null;
+    }
+    if (c.kind === 'magnifier') {
+      const L = this._lens(c, dest, false);
+      return { x: L.cx - L.r, y: L.cy - L.r, w: L.r * 2, h: L.r * 2, rotation: c.rotation, full: null };
+    }
+    const geo = this._mediaGeom(c, dest, false);
+    if (geo) return { ...geo.crop, rotation: c.rotation, full: geo.full };
+    // not decoded yet: fall back to the media's own aspect ratio
+    const m = c.mediaId ? this.store.media.get(c.mediaId) : null;
+    if (!m || !m.width || !m.height) return null;
+    const k = Math.min(dest.w / m.width, dest.h / m.height) * c.scale;
+    const w = c.fit === 'stretch' ? dest.w * c.scale : m.width * k, h = c.fit === 'stretch' ? dest.h * c.scale : m.height * k;
+    const full = { x: dest.w / 2 + (c.x / 100) * dest.w - w / 2, y: dest.h / 2 + (c.y / 100) * dest.h - h / 2, w, h };
+    const q = cropOf(c);
+    const left = c.flipH ? q.r : q.l, top = c.flipV ? q.b : q.t;
+    return { x: full.x + w * left, y: full.y + h * top, w: w * q.w, h: h * q.h, rotation: c.rotation, full };
+  }
+
+  /**
+   * Scale and position that make the cropped part fill the frame (as much as fits, centred) – the
+   * "crop, then blow it up" step. Null when the layer's picture is not known yet.
+   */
+  fitCropPatch(clip: Clip): Pick<Clip, 'scale' | 'x' | 'y'> | null {
+    const W = this.store.project.width, H = this.store.project.height;
+    const at1 = this.clipFrame({ ...clip, keyframes: [], scale: 1, x: 0, y: 0, rotation: 0 }, clip.start);
+    if (!at1 || !at1.full || at1.w < 1 || at1.h < 1) return null;
+    const s = Math.min(W / at1.w, H / at1.h);
+    // centre of the cropped part relative to the frame's centre, at scale 1
+    const dx = at1.x + at1.w / 2 - W / 2, dy = at1.y + at1.h / 2 - H / 2;
+    return { scale: Math.round(s * 1000) / 1000, x: Math.round((-dx * s / W) * 1000) / 10, y: Math.round((-dy * s / H) * 1000) / 10 };
+  }
+
+  _drawClip(source: Clip, dest: Rect, forceContain: boolean, t: number = this.currentTime, next?: Clip) {
     // a predecessor being blended away follows the incoming clip's transition, not its own
-    const fx = next ? this._outgoingFx(next, t) : this._transitionFx(clip, t);
-    const trackOpacity = this.store.getTrack(clip.trackId)?.opacity ?? 1;
+    const fx = next ? this._outgoingFx(next, t) : this._transitionFx(source, t);
+    const trackOpacity = this.store.getTrack(source.trackId)?.opacity ?? 1;
+    const clip = animatedAt(source, t);
     if (clip.kind === 'text') { this._drawText(clip, dest, forceContain, fx, trackOpacity); return; }
-    const r = this._mediaRect(clip, dest, forceContain);
-    if (!r) return;
+    if (clip.kind === 'magnifier') { this._drawMagnifier(clip, dest, forceContain, fx, trackOpacity); return; }
+    const geo = this._mediaGeom(clip, dest, forceContain);
+    if (!geo) return;
+    const r = geo.crop;
+    if (r.w < 0.5 || r.h < 0.5) return;
     const g = this.ctx2d;
     g.save();
     g.globalAlpha = clamp(clip.opacity * trackOpacity * fx.alpha, 0, 1);
     if (g.globalAlpha <= 0.001) { g.restore(); return; }
-    const moves = fx.dx || fx.dy || fx.scale !== 1 || fx.scaleX !== 1 || fx.rotate;
+    this._setBlend(g, clip);
+    // the channel grid is a monitoring view: no rotation there, like no layout transform
+    const rotation = forceContain ? 0 : clip.rotation;
+    const moves = fx.dx || fx.dy || fx.scale !== 1 || fx.scaleX !== 1 || fx.rotate || rotation;
     if (forceContain || clip.fit === 'cover' || clip.scale > 1 || moves) { g.beginPath(); g.rect(dest.x, dest.y, dest.w, dest.h); g.clip(); }
     this._applyFx(g, fx, dest);
+    this._orient(g, r.x + r.w / 2, r.y + r.h / 2, rotation, clip.flipH, clip.flipV);
+    this._setFilter(g, clip, fx, dest);
     try {
       if (fx.pixel > 1.5) {
         // pixelate: draw tiny, then blow up without smoothing
@@ -607,11 +708,11 @@ export class Player extends Emitter {
         if (pc.width !== pw || pc.height !== ph) { pc.width = pw; pc.height = ph; }
         const pg = pc.getContext('2d')!;
         pg.imageSmoothingEnabled = true;
-        pg.drawImage(r.el, 0, 0, pw, ph);
+        pg.drawImage(geo.el, geo.sx, geo.sy, geo.sw, geo.sh, 0, 0, pw, ph);
         g.imageSmoothingEnabled = false;
         g.drawImage(pc, 0, 0, pw, ph, r.x, r.y, r.w, r.h);
         g.imageSmoothingEnabled = true;
-      } else g.drawImage(r.el, r.x, r.y, r.w, r.h);
+      } else g.drawImage(geo.el, geo.sx, geo.sy, geo.sw, geo.sh, r.x, r.y, r.w, r.h);
       if (fx.overlay && fx.overlay.alpha > 0) {
         g.filter = 'none';
         g.globalAlpha = clamp(clip.opacity * trackOpacity * fx.alpha * fx.overlay.alpha, 0, 1);
@@ -619,6 +720,51 @@ export class Player extends Emitter {
         g.fillRect(r.x, r.y, r.w, r.h);
       }
     } catch { /* frame not ready */ }
+    g.restore();
+  }
+
+  /**
+   * A magnifying lens: what the layers below show under the lens, enlarged. It reads the composition
+   * as drawn so far – layers are painted bottom to top – so it magnifies everything beneath it.
+   */
+  _drawMagnifier(clip: Clip, dest: Rect, forceContain: boolean, fx: TransitionFx, trackOpacity = 1) {
+    const { cx, cy, r } = this._lens(clip, dest, forceContain);
+    const dip = fx.overlay ? 1 - fx.overlay.alpha : 1;
+    const alpha = clamp(clip.opacity * trackOpacity * fx.alpha * dip, 0, 1);
+    if (alpha <= 0.001) return;
+    const size = Math.min(4096, Math.ceil(r * 2));
+    if (size < 2) return;
+    const zoom = Math.max(1, clip.magZoom || 1), half = r / zoom;
+    const mc = (this._magCanvas ||= document.createElement('canvas'));
+    if (mc.width !== size || mc.height !== size) { mc.width = size; mc.height = size; }
+    const mg = mc.getContext('2d')!;
+    mg.fillStyle = this.store.project.background || '#000';
+    mg.fillRect(0, 0, size, size);
+    try { mg.drawImage(this.canvas, cx - half, cy - half, half * 2, half * 2, 0, 0, size, size); } catch { /* nothing drawn yet */ }
+    const g = this.ctx2d;
+    g.save();
+    g.globalAlpha = alpha;
+    this._setBlend(g, clip);
+    g.beginPath(); g.rect(dest.x, dest.y, dest.w, dest.h); g.clip();
+    this._applyFx(g, fx, dest);
+    this._orient(g, cx, cy, forceContain ? 0 : clip.rotation, false, false);
+    const lens = lensPath(clip.magShape, cx, cy, r);
+    if (clip.magShadow) {
+      g.save();
+      g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = r * 0.18; g.shadowOffsetY = r * 0.06;
+      g.fillStyle = '#000'; g.fill(lens);
+      g.restore();
+    }
+    g.save();
+    g.clip(lens);
+    this._setFilter(g, clip, fx, dest);
+    g.drawImage(mc, cx - r, cy - r, r * 2, r * 2);
+    g.restore();
+    if (clip.magBorderWidth > 0) {
+      g.lineWidth = Math.max(1, dest.h * clip.magBorderWidth / 100);
+      g.strokeStyle = clip.magBorderColor || '#fff';
+      g.stroke(lens);
+    }
     g.restore();
   }
 
@@ -706,8 +852,11 @@ export class Player extends Emitter {
     if (alpha <= 0.001) return;
     g.save();
     g.globalAlpha = alpha;
+    this._setBlend(g, clip);
     g.beginPath(); g.rect(dest.x, dest.y, dest.w, dest.h); g.clip();
     this._applyFx(g, fx, dest);
+    this._orient(g, L.bx + L.bw / 2, L.by + L.bh / 2, forceContain ? 0 : clip.rotation, clip.flipH, clip.flipV);
+    this._setFilter(g, clip, fx, dest);
     if (clip.reflection && (clip.reflectionOpacity ?? 0) > 0) this._paintReflection(g, clip, L);
     this._setTextStyle(g, clip, L.fontPx);
     this._paintText(g, clip, L, true);
@@ -759,4 +908,22 @@ export class Player extends Emitter {
     this.trackGains.clear();
     if (this.audio) { try { void this.audio.close(); } catch { /* ignore */ } this.audio = null; }
   }
+}
+
+/** Crop of a layer as fractions: cut on each side and what is left (never less than 2%). */
+function cropOf(c: Clip) {
+  let l = clamp((c.cropL || 0) / 100, 0, 0.98), r = clamp((c.cropR || 0) / 100, 0, 0.98);
+  let t = clamp((c.cropT || 0) / 100, 0, 0.98), b = clamp((c.cropB || 0) / 100, 0, 0.98);
+  if (l + r > 0.98) { const k = 0.98 / (l + r); l *= k; r *= k; }
+  if (t + b > 0.98) { const k = 0.98 / (t + b); t *= k; b *= k; }
+  return { l, t, r, b, w: 1 - l - r, h: 1 - t - b };
+}
+
+/** Outline of a magnifier lens. */
+function lensPath(shape: Clip['magShape'], cx: number, cy: number, r: number): Path2D {
+  const p = new Path2D();
+  if (shape === 'rect') p.rect(cx - r, cy - r, r * 2, r * 2);
+  else if (shape === 'rounded') p.roundRect(cx - r, cy - r, r * 2, r * 2, r * 0.25);
+  else p.arc(cx, cy, r, 0, Math.PI * 2);
+  return p;
 }

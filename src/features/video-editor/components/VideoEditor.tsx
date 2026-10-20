@@ -107,6 +107,17 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
     return clip;
   }, [store, player, t]);
 
+  /** A magnifying lens over the layers below it, at the playhead, on a free video track above them. */
+  const addMagnifierClip = useCallback((time: number = player.currentTime): Clip => {
+    const dur = TEXT_DEFAULT_DURATION;
+    let track = store.project.tracks.find((tr) => tr.kind === 'video' && !tr.locked && store.isFree(tr.id, time, dur));
+    if (!track) track = store.addTrack('video');
+    const clip = store.addClip({ kind: 'magnifier', trackId: track.id, name: t('mag.name'), start: Math.max(0, time), duration: dur, transIn: { type: 'zoom', duration: 0.3 }, transOut: { type: 'fade', duration: 0.3 } });
+    store.selectClips([clip.id]);
+    toast.success(t('mag.added'));
+    return clip;
+  }, [store, player, t]);
+
   const splitSelected = useCallback(() => {
     const clips = store.selectedClips(); const tm = player.currentTime; let did = false;
     for (const c of clips) if (store.splitClipAt(c.id, tm)) did = true;
@@ -252,10 +263,10 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
 
   // ---------- debug / test handle ----------
   useEffect(() => {
-    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, dock, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable }, server: { probeServer, transcodeOnServer, setServerToken, resetServerProbe, chooseFormat, playableFormats }, diagnostics: () => logDiagnostics(CODEC_CORE_URL), rawDiagnostics: () => diagnostics(CODEC_CORE_URL) };
+    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, dock, addMediaToTimeline, addTextClip, addMagnifierClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable }, server: { probeServer, transcodeOnServer, setServerToken, resetServerProbe, chooseFormat, playableFormats }, diagnostics: () => logDiagnostics(CODEC_CORE_URL), rawDiagnostics: () => diagnostics(CODEC_CORE_URL) };
     log('debug handle ready – window.veditor (diagnostics(), store, player, importFiles …)');
     return () => { delete (window as any).veditor; };
-  }, [store, player, exporter, dock, addMediaToTimeline, addTextClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, importFiles]);
+  }, [store, player, exporter, dock, addMediaToTimeline, addTextClip, addMagnifierClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, importFiles]);
 
   /** Brings the properties panel into view – reopening it if it was closed, switching tabs on a phone. */
   const openInspector = () => {
@@ -277,7 +288,7 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
       if (sel.length !== 1) return;
       const c = sel[0];
       const track = store.getTrack(c.trackId);
-      const visual = c.kind === 'text' || (track?.kind === 'video' && !!c.mediaId && store.media.get(c.mediaId)?.kind !== 'audio');
+      const visual = c.kind !== 'media' || (track?.kind === 'video' && !!c.mediaId && store.media.get(c.mediaId)?.kind !== 'audio');
       if (!visual) return;
       if (!dock.isOpen('inspector')) { dock.toggle('inspector'); return; }
       const panel = dock.api.getPanel('inspector');
@@ -292,7 +303,7 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
     return () => { off(); window.removeEventListener('pointerdown', down, true); window.removeEventListener('pointerup', up, true); window.removeEventListener('pointercancel', up, true); };
   }, [phone, dock, store]);
 
-  const actions = { split: splitSelected, duplicate: duplicateSelected, detachAudio: detachAudioSelected, deleteSelected, crossfade: crossfadeSelected, addText: () => addTextClip() };
+  const actions = { split: splitSelected, duplicate: duplicateSelected, detachAudio: detachAudioSelected, deleteSelected, crossfade: crossfadeSelected, addText: () => addTextClip(), addMagnifier: () => addMagnifierClip() };
 
   // Every panel is a dockable panel: it can be dragged to another edge, stacked into tabs, resized,
   // closed and reopened. The arrangement is remembered, and the top bar can put it back.

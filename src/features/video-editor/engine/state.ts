@@ -62,8 +62,14 @@ export function defaultClip(patch: Partial<Clip> = {}): Clip {
     bgEnabled: false, bgColor: '#000000', bgOpacity: 0.6, outlineColor: '#000000', outlineWidth: 0, shadow: true, lineHeight: 1.2,
     shadowColor: '#000000', shadowOpacity: 0.6, shadowBlur: 15, shadowX: 4, shadowY: 4,
     reflection: false, reflectionOpacity: 0.4, reflectionGap: 0, reflectionLength: 60, letterSpacing: 0,
+    rotation: 0, cropL: 0, cropT: 0, cropR: 0, cropB: 0, flipH: false, flipV: false, blendMode: 'normal',
+    brightness: 100, contrast: 100, saturation: 100, hue: 0, blur: 0, sepia: 0, grayscale: 0,
+    keyframes: [],
+    magZoom: 2, magSize: 18, magShape: 'circle', magBorderColor: '#ffffff', magBorderWidth: 0.5, magShadow: true,
     ...patch,
   };
+  // keyframes are edited by replacing the array; a copy keeps duplicates and splits independent
+  c.keyframes = (patch.keyframes ?? []).map((k) => ({ ...k }));
   c.transIn = defaultTransition(patch.transIn);
   c.transOut = defaultTransition(patch.transOut);
   return c;
@@ -79,6 +85,8 @@ export class Store extends Emitter {
   future: string[] = [];
   maxHistory = 100;
   dirty = false;
+  /** The clip whose crop is being edited on the canvas, if any (UI state, not part of the project). */
+  cropClipId: string | null = null;
   constructor() {
     super();
     // default tracks
@@ -182,11 +190,11 @@ export class Store extends Emitter {
 
   /** Whether kind of media can be placed on given track kind. */
   canPlaceKind(mediaKind: PlacementKind | null, trackKind: TrackKind): boolean {
-    if (trackKind === 'video') return mediaKind === 'video' || mediaKind === 'image' || mediaKind === 'text';
+    if (trackKind === 'video') return mediaKind === 'video' || mediaKind === 'image' || mediaKind === 'text' || mediaKind === 'magnifier';
     return mediaKind === 'audio' || mediaKind === 'video';
   }
   /** Placement kind of a clip: media kind, or 'text' for text layers. */
-  clipKind(clip: Clip): PlacementKind | null { if (clip.kind === 'text') return 'text'; const m = clip.mediaId ? this.media.get(clip.mediaId) : null; return m ? m.kind : null; }
+  clipKind(clip: Clip): PlacementKind | null { if (clip.kind !== 'media') return clip.kind; const m = clip.mediaId ? this.media.get(clip.mediaId) : null; return m ? m.kind : null; }
   /** The clip that directly follows `clip` on its track (touching within tolerance), or null. */
   adjacentNext(clip: Clip, tol = 0.02): Clip | null {
     const end = clip.start + clip.duration;
@@ -240,7 +248,7 @@ export class Store extends Emitter {
   }
   /** Max duration for a clip given media (Infinity for images). */
   maxClipDuration(clip: Clip): number {
-    if (clip.kind === 'text') return Infinity;
+    if (clip.kind !== 'media') return Infinity;
     const m = clip.mediaId ? this.media.get(clip.mediaId) : null;
     if (!m || m.kind === 'image') return Infinity;
     return Math.max(0, m.duration - clip.offset);
@@ -253,7 +261,8 @@ export class Store extends Emitter {
     const d1 = time - c.start;
     c.duration = d1;
     // fades and transitions are kept on the outer edges only
-    const right = defaultClip({ ...c, id: uid(), start: time, duration: first - d1, offset: c.offset + d1, fadeIn: 0, transIn: defaultTransition(), transOut: { ...c.transOut } });
+    // keyframes are relative to the clip's start: the right half keeps the same motion, shifted
+    const right = defaultClip({ ...c, id: uid(), start: time, duration: first - d1, offset: c.offset + d1, fadeIn: 0, transIn: defaultTransition(), transOut: { ...c.transOut }, keyframes: c.keyframes.map((k) => ({ ...k, t: k.t - d1 })) });
     c.fadeOut = 0; c.transOut = defaultTransition();
     this.project.clips.push(right);
     this.changed('split');
@@ -296,6 +305,7 @@ export class Store extends Emitter {
   }
   selectTrack(id: string) { this.selection.clipIds = new Set(); this.selection.trackId = id; this.emit('selection'); }
   clearSelection() { this.selection.clipIds = new Set(); this.selection.trackId = null; this.emit('selection'); }
+  setCropMode(id: string | null) { if (this.cropClipId !== id) { this.cropClipId = id; this.emit('crop'); } }
   selectedClips(): Clip[] { return [...this.selection.clipIds].map((id) => this.getClip(id)).filter((c): c is Clip => !!c); }
 
   // ---------- project (de)serialisation ----------
