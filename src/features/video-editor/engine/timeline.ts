@@ -205,7 +205,7 @@ export class Timeline {
   _makeClipEl(c: Clip) {
     const el = document.createElement('div');
     el.dataset.clipId = c.id;
-    el.innerHTML = `<div class="thumbs"></div><canvas class="wave"></canvas><div class="fade in"></div><div class="fade out"></div><div class="trans in" title="">⟋</div><div class="trans out" title="">⟍</div><div class="clip-label"></div><div class="handle l"></div><div class="handle r"></div><button type="button" class="junction" hidden></button>`;
+    el.innerHTML = `<div class="thumbs"></div><canvas class="wave"></canvas><div class="fade in"></div><div class="fade out"></div><div class="trans in" title="">⟋</div><div class="trans out" title="">⟍</div><div class="clip-label"></div><div class="clip-kfs"></div><div class="handle l"></div><div class="handle r"></div><button type="button" class="junction" hidden></button>`;
     el.addEventListener('pointerdown', (e) => this._clipPointerDown(e, c.id));
     const junction = el.querySelector('.junction') as HTMLButtonElement;
     junction.addEventListener('pointerdown', (e) => { e.stopPropagation(); });
@@ -217,12 +217,26 @@ export class Timeline {
     const m = c.mediaId ? this.store.media.get(c.mediaId) ?? null : null;
     const track = this.store.getTrack(c.trackId);
     const isText = c.kind === 'text';
-    const kind = isText ? 'text' : (m ? m.kind : 'video');
+    const kind = c.kind !== 'media' ? c.kind : (m ? m.kind : 'video');
     const visualKind = track && track.kind === 'audio' ? 'audio' : kind;
     el.className = `clip ${visualKind}${c.muted ? ' muted' : ''}`;
     el.style.left = this.timeToX(c.start) + 'px';
     el.style.width = Math.max(2, this.timeToX(c.duration)) + 'px';
-    el.querySelector('.clip-label')!.textContent = isText ? 'T  ' + (c.text || '').split('\n')[0] : (c.name || (m ? m.name : '?'));
+    el.querySelector('.clip-label')!.textContent = isText ? 'T  ' + (c.text || '').split('\n')[0] : c.kind === 'magnifier' ? '🔍  ' + (c.name || t('mag.name')) : (c.name || (m ? m.name : '?'));
+    // keyframes show as small diamonds along the clip
+    const kfs = el.querySelector('.clip-kfs') as HTMLElement;
+    const kfKey = c.keyframes.map((k) => k.t.toFixed(3)).join(',') + '|' + c.duration + '|' + this.pps;
+    if (kfs.dataset.key !== kfKey) {
+      kfs.dataset.key = kfKey;
+      kfs.innerHTML = '';
+      for (const k of c.keyframes) {
+        if (k.t < -1e-3 || k.t > c.duration + 1e-3) continue;
+        const d = document.createElement('i');
+        d.className = 'kf';
+        d.style.left = this.timeToX(k.t) + 'px';
+        kfs.appendChild(d);
+      }
+    }
     (el.querySelector('.fade.in') as HTMLElement).style.width = this.timeToX(c.fadeIn) + 'px';
     (el.querySelector('.fade.out') as HTMLElement).style.width = this.timeToX(c.fadeOut) + 'px';
     const tIn = el.querySelector('.trans.in') as HTMLElement, tOut = el.querySelector('.trans.out') as HTMLElement;

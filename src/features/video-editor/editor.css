@@ -54,6 +54,9 @@
 .veditor .clip.audio { background: #144d2b; }
 .veditor .clip.text { background: linear-gradient(180deg, #5b2d8e, #3f1f66); }
 .veditor .clip.text .clip-label { font-family: Georgia, serif; font-size: 12px; }
+.veditor .clip.magnifier { background: linear-gradient(180deg, #0f6b5c, #0a4a40); }
+.veditor .clip-kfs { position: absolute; inset: auto 0 3px 0; height: 8px; pointer-events: none; z-index: 2; }
+.veditor .clip-kfs .kf { position: absolute; top: 0; width: 7px; height: 7px; margin-left: -3.5px; background: #fcd34d; border: 1px solid rgba(0,0,0,.55); transform: rotate(45deg); }
 .veditor .clip.selected { border-color: #fff; box-shadow: 0 0 0 1px #fff inset; z-index: 2; }
 .veditor .clip.dragging { opacity: .85; cursor: grabbing; z-index: 3; }
 .veditor .clip.muted .clip-label::after { content: " 🔇"; }

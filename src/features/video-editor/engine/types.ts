@@ -1,8 +1,8 @@
 // ===================== Shared engine types =====================
 export type TrackKind = 'video' | 'audio';
 export type MediaKind = 'video' | 'audio' | 'image';
-export type ClipKind = 'media' | 'text';
-export type PlacementKind = MediaKind | 'text';
+export type ClipKind = 'media' | 'text' | 'magnifier';
+export type PlacementKind = MediaKind | 'text' | 'magnifier';
 export type TransitionType =
   | 'none' | 'fade' | 'fade-black' | 'fade-white'
   | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down'
@@ -12,6 +12,16 @@ export type TransitionType =
   | 'zoom' | 'zoom-out' | 'cross-zoom' | 'spin' | 'flip' | 'blur' | 'pixelate';
 export type FitMode = 'contain' | 'cover' | 'stretch';
 export type TextAlign = 'left' | 'center' | 'right';
+export type BlendMode =
+  | 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'color-dodge' | 'color-burn'
+  | 'hard-light' | 'soft-light' | 'difference' | 'exclusion' | 'hue' | 'saturation' | 'color' | 'luminosity';
+export type KeyframeEase = 'linear' | 'ease' | 'ease-in' | 'ease-out' | 'hold';
+export type MagnifierShape = 'circle' | 'rounded' | 'rect';
+
+/** The properties a keyframe animates, with their value at one moment. */
+export interface KeyframeValues { x: number; y: number; scale: number; rotation: number; opacity: number }
+/** `t` is seconds from the clip's start; `ease` shapes the way to the next keyframe. */
+export interface Keyframe extends KeyframeValues { t: number; ease: KeyframeEase }
 
 export interface Transition { type: TransitionType; duration: number }
 
@@ -35,6 +45,19 @@ export interface Clip {
   /** Mirror image of the text below it: opacity at the top, gap and fade length (in % of the text block height). */
   reflection: boolean; reflectionOpacity: number; reflectionGap: number; reflectionLength: number;
   letterSpacing: number;
+  /** Rotation around the layer's centre, in degrees (clockwise). */
+  rotation: number;
+  /** Crop: how much of the source is cut away on each side, in % of the source width/height. */
+  cropL: number; cropT: number; cropR: number; cropB: number;
+  flipH: boolean; flipV: boolean;
+  /** How the layer mixes with the layers below it. */
+  blendMode: BlendMode;
+  /** Colour adjustments in %, hue in degrees, blur in % of the frame height (×10). */
+  brightness: number; contrast: number; saturation: number; hue: number; blur: number; sepia: number; grayscale: number;
+  /** Animation of position/scale/rotation/opacity; empty = the plain values above apply. */
+  keyframes: Keyframe[];
+  /** Magnifier layer: zoom factor, lens radius (% of frame height), shape, border and shadow. */
+  magZoom: number; magSize: number; magShape: MagnifierShape; magBorderColor: string; magBorderWidth: number; magShadow: boolean;
 }
 
 export interface Project {

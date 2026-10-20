@@ -368,6 +368,107 @@ try {
   check('layer opacity dims the whole track', textFx.trackMax > 90 && textFx.trackMax < 170, `max=${textFx.trackMax}`);
   check('the selected layer can be moved and resized on the preview', moved.x > 1 && moved.y > -20 && moved.scale > 1.05 && moved.preview && moved.fonts > 40, JSON.stringify(moved));
 
+  // ---- crop, rotate, mirror, effects, keyframes and the magnifier layer ----
+  // a test card: red left half, blue right half, a small white square in the middle
+  const card = await page.evaluate(async () => {
+    const { store, player, importFiles } = window.veditor;
+    player.pause();
+    const cv = document.createElement('canvas'); cv.width = 400; cv.height = 200;
+    const cg = cv.getContext('2d');
+    cg.fillStyle = '#ff0000'; cg.fillRect(0, 0, 200, 200); cg.fillStyle = '#0000ff'; cg.fillRect(200, 0, 200, 200); cg.fillStyle = '#ffffff'; cg.fillRect(195, 95, 10, 10);
+    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+    const [m] = await importFiles([new File([blob], 'testcard.png', { type: 'image/png' })]);
+    await new Promise((r) => { const img = store.media.get(m.id).image; if (!img || img.complete) r(); else img.onload = r; });
+    const free = store.projectDuration() + 1;
+    const top = store.addTrack('video');
+    store.project.tracks.splice(store.project.tracks.indexOf(top), 1); store.project.tracks.unshift(top); store.changed('test');
+    const c = store.addClip({ trackId: top.id, mediaId: m.id, name: 'testcard', start: free, duration: 4 });
+    player._syncNodes();
+    const at = free + 1, g = player.canvas.getContext('2d');
+    const px = (x, y) => { player.render(at); return [...g.getImageData(x, y, 1, 1).data.slice(0, 3)]; };
+    const isRed = (p) => p[0] > 200 && p[1] < 60 && p[2] < 60, isBlue = (p) => p[2] > 200 && p[0] < 60 && p[1] < 60, isDark = (p) => p[0] < 40 && p[1] < 40 && p[2] < 40, isWhite = (p) => p.every((v) => v > 200);
+    const out = {};
+    out.plain = isRed(px(500, 540)) && isBlue(px(1400, 540));
+    store.updateClip(c.id, { cropR: 50 }, { silent: true });
+    out.cropped = isRed(px(500, 540)) && isDark(px(1400, 540));
+    const fit = player.fitCropPatch(store.getClip(c.id));
+    store.updateClip(c.id, fit, { silent: true });
+    out.fit = fit; out.fitFills = isRed(px(1400, 540)) && isRed(px(960, 200)) && isDark(px(1800, 540));
+    store.updateClip(c.id, { cropR: 0, scale: 1, x: 0, y: 0, rotation: 180 }, { silent: true });
+    out.rotated = isBlue(px(500, 540)) && isRed(px(1400, 540));
+    store.updateClip(c.id, { rotation: 0, flipH: true }, { silent: true });
+    out.flipped = isBlue(px(500, 540));
+    store.updateClip(c.id, { flipH: false, grayscale: 100 }, { silent: true });
+    const grey = px(500, 540); out.grey = Math.abs(grey[0] - grey[1]) < 12 && Math.abs(grey[1] - grey[2]) < 12 && grey[0] > 20;
+    store.updateClip(c.id, { grayscale: 0, blendMode: 'multiply' }, { silent: true });
+    out.blend = isRed(px(500, 540)) === false; // red multiplied with the black background goes dark
+    store.updateClip(c.id, { blendMode: 'normal' }, { silent: true });
+    // a magnifier over the middle enlarges the white square
+    const before = px(1040, 540);
+    const magTrack = store.addTrack('video');
+    store.project.tracks.splice(store.project.tracks.indexOf(magTrack), 1); store.project.tracks.unshift(magTrack);
+    const mag = store.addClip({ kind: 'magnifier', trackId: magTrack.id, name: 'lens', start: free, duration: 4, magZoom: 4, magSize: 20 });
+    out.magnified = isBlue(before) && isWhite(px(1040, 540)) && isBlue(px(1400, 540));
+    out.magKind = mag.kind;
+    store.removeClips([mag.id]);
+    store.removeTrack(magTrack.id);
+    store.selectClips([c.id]);
+    player.seek(at);
+    return { id: c.id, mediaId: m.id, at, ...out };
+  });
+  check('crop keeps only part of the picture, and "fit crop" blows it up to fill the frame', card.plain && card.cropped && card.fitFills, JSON.stringify(card));
+  check('a layer can be rotated, mirrored, colour-graded and blended', card.rotated && card.flipped && card.grey && card.blend, JSON.stringify(card));
+  check('the magnifier layer enlarges what is below it', card.magnified && card.magKind === 'magnifier', JSON.stringify(card));
+
+  // on the preview: crop mode cuts from an edge, the round handle rotates
+  await page.waitForSelector('#transformBox #rotateHandle', { timeout: 5000 });
+  await page.click('#btnCanvasCrop');
+  await page.waitForSelector('#transformBox[data-crop=on] [data-edge=e]', { timeout: 3000 });
+  const edge = await page.locator('#transformBox [data-edge=e]').boundingBox();
+  await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2); await page.mouse.down();
+  await page.mouse.move(edge.x - 80, edge.y + edge.height / 2, { steps: 5 }); await page.mouse.up();
+  const cropUi = await page.evaluate((id) => ({ cropR: window.veditor.store.getClip(id).cropR, full: !!document.querySelector('[data-testid=crop-full]') }), card.id);
+  await page.click('#btnCanvasCrop');
+  await page.waitForSelector('#transformBox[data-crop=off] #rotateHandle', { timeout: 3000 });
+  const tbox = await page.locator('#transformBox').boundingBox();
+  const rh = await page.locator('#rotateHandle').boundingBox();
+  const ccx = tbox.x + tbox.width / 2, ccy = tbox.y + tbox.height / 2;
+  await page.mouse.move(rh.x + rh.width / 2, rh.y + rh.height / 2); await page.mouse.down();
+  // a quarter turn clockwise: from above the centre to its right
+  const rad = Math.hypot(rh.x + rh.width / 2 - ccx, rh.y + rh.height / 2 - ccy);
+  for (const a of [20, 45, 70, 90]) await page.mouse.move(ccx + rad * Math.sin(a * Math.PI / 180), ccy - rad * Math.cos(a * Math.PI / 180));
+  await page.mouse.up();
+  const rotUi = await page.evaluate((id) => window.veditor.store.getClip(id).rotation, card.id);
+  check('on the preview, crop mode cuts from an edge and the round handle rotates the layer', cropUi.cropR > 5 && cropUi.full && Math.abs(rotUi - 90) < 1.5, JSON.stringify({ ...cropUi, rotation: rotUi }));
+
+  // keyframes: animating, auto-key from an edit at another time, interpolation and the timeline diamonds
+  await page.click('#btnAnimate');
+  const anim = await page.evaluate(async (id) => {
+    const { store, player } = window.veditor;
+    const c = store.getClip(id);
+    const k1 = c.keyframes.length;
+    player.seek(c.start + 3);
+    await new Promise((r) => setTimeout(r, 300));
+    return { k1, sections: ['cropSection', 'effectsSection', 'keyframeSection'].every((s) => document.getElementById(s)) };
+  }, card.id);
+  await page.click('#btnRotLeft');
+  const anim2 = await page.evaluate((id) => {
+    const { store, player } = window.veditor;
+    const c = store.getClip(id);
+    const mid = player.clipFrame(c, c.start + 2);
+    return { n: c.keyframes.length, rotK: c.keyframes.map((k) => k.rotation), plainRotation: c.rotation, mid: mid.rotation, diamonds: document.querySelectorAll(`.clip[data-id="${id}"] .clip-kfs .kf`).length || document.querySelectorAll('.clip-kfs .kf').length, count: document.getElementById('kfCount')?.textContent };
+  }, card.id);
+  check('keyframes: an edit at another time adds a keyframe and the frames between are interpolated',
+    anim.k1 === 1 && anim.sections && anim2.n === 2 && Math.abs(anim2.rotK[1]) < 1 && Math.abs(anim2.rotK[0] - 90) < 1.5 && anim2.mid > 5 && anim2.mid < 85 && anim2.diamonds >= 2,
+    JSON.stringify({ ...anim, ...anim2 }));
+
+  // the magnifier from the timeline toolbar opens its own settings
+  await page.click('#btnAddMagnifier');
+  await page.waitForSelector('#magnifierSection', { timeout: 3000 });
+  const magUi = await page.evaluate(() => { const { store } = window.veditor; const c = store.selectedClips()[0]; const label = document.querySelector('.clip.magnifier .clip-label')?.textContent || ''; store.removeClips([c.id]); return { kind: c.kind, label }; });
+  check('the toolbar adds a magnifier layer with its own settings', magUi.kind === 'magnifier' && magUi.label.includes('🔍'), JSON.stringify(magUi));
+  await page.evaluate(({ id, mediaId }) => { const { store } = window.veditor; const tr = store.getClip(id).trackId; store.removeMedia(mediaId); store.removeTrack(tr); store.clearSelection(); }, card);
+
   // ---- the playhead is a handle of its own, and a double click on a layer opens its properties ----
   const before = await page.evaluate(() => { const { store, player } = window.veditor; player.pause(); player.seek(1); store.clearSelection(); return { starts: store.project.clips.map((c) => c.start), sel: store.selection.clipIds.size }; });
   await page.waitForTimeout(200);

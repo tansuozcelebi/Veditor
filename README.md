@@ -17,7 +17,7 @@ kopyalanıp takılabilir. Ayrıntılar için [Başka bir uygulamaya entegrasyon]
 
 > English summary: Veditor is a browser-only multi-track video editor built with React 19, TypeScript, Vite,
 > Tailwind v4 and shadcn/ui. It composites several video layers (full-frame or picture-in-picture), mixes multiple
-> audio tracks with volume/fades, records voice-overs, adds text layers and clip transitions, and exports via
+> audio tracks with volume/fades, records voice-overs, adds text and magnifier layers, crop/rotate, blend modes, colour effects, keyframe animation and clip transitions, and exports via
 > `MediaRecorder` (WebM VP9/VP8 + Opus, or MP4 where supported). The editor ships as a self-contained feature
 > module (`src/features/video-editor`) that can be mounted as a route inside any shadcn-based host app.
 
@@ -34,6 +34,10 @@ kopyalanıp takılabilir. Ayrıntılar için [Başka bir uygulamaya entegrasyon]
 | **Görüntü** | Klip ve **katman (kanal) başına opaklık**, sığdırma modu (sığdır/kapla/esnet), ölçek ve konum; seçili katman **önizlemede sürüklenerek taşınır, köşelerinden boyutlandırılır** (fare ve dokunmatik); hazır **PiP** ve yarım ekran yerleşimleri. |
 | **Geçiş efektleri** | Klip başına giriş/çıkış geçişi, 31 tür: çapraz erime, siyaha/beyaza geçiş, kaydırma, itme (push), açığa çıkarma (reveal), dört yönde silme, kapı (barn door), daire (iris), elmas, saat, jaluzi, yakınlaş/uzaklaş, çapraz zoom, döndür, çevir (flip), bulanıklık, pikselleştir. Zaman çizelgesinde bitişik iki klip arasındaki işaretle geçiş doğrudan açılır. Bitişik önceki klip varsa iki klip harmanlanır (önceki klip uzatılır, sesler çapraz geçer); yoksa klip alttaki katmandan belirir. |
 | **Yazı katmanı** | Video kanallarına yazı klipleri (**T** tuşu veya "Yazı Ekle"): çok satırlı metin, **yazı tipi seçimi** (sistem yazı tipleri + Google Fonts, kendi TTF/OTF/WOFF dosyanızı yükleme, önizleme), boyut, **renk** (renk seçici + hazır renkler), kalın/italik, hizalama, harf ve satır aralığı, arka plan kutusu, kontur, **gölge** (renk, opaklık, yumuşaklık, X/Y kayması), **yansıma** (opaklık, uzunluk, boşluk); konum/ölçek/opaklık ve geçişler tüm kliplerde olduğu gibi çalışır. |
+| **Kırp, döndür, çevir** | Video/görsel katmanlarında **kırpma** (dört kenar; Özellikler panelinden ya da önizlemede kırpma modunda kenar/köşe tutamaçlarıyla), "kırpılanı ekrana sığdır" ile kırpılan bölgeyi ölçekleyip ortalama, **döndürme** (önizlemedeki yuvarlak tutamaç, Shift ile 15° adım, ±90° düğmeleri) ve yatay/dikey **çevirme**. Döndürme yazı ve büyüteç katmanlarında da çalışır. |
+| **Efektler** | After Effects tarzı **karışım modları** (Çarp, Ekran, Kaplama, Fark, Renk… 16 mod), parlaklık, kontrast, doygunluk, ton, bulanıklık, sepya, siyah-beyaz ve hazır görünümler (Siyah-beyaz, Sepya, Canlı, Soluk, Soğuk, Sıcak). |
+| **Keyframe animasyonu** | Konum, ölçek, döndürme ve opaklık için keyframe'ler: "Animasyonu başlat" ile açılır, açıkken yapılan her değişiklik (panelden veya önizlemede sürükleyerek) oynatma kafasında keyframe oluşturur; geçiş eğrileri (doğrusal, Easy Ease, yavaş başla/bitir, tut), önceki/sonraki keyframe'e atlama, zaman çizelgesinde elmas işaretleri ve hazır hareketler (Ken Burns yakınlaş/uzaklaş, sola/sağa kaydır, dönerek gel, zıplayarak gel). |
+| **Büyüteç katmanı** | "Büyüteç" düğmesiyle eklenen katman, altındaki tüm katmanları mercek içinde büyütür: büyütme oranı, mercek boyutu, şekil (daire, yuvarlak köşeli, kare), çerçeve rengi/kalınlığı ve gölge; önizlemede taşınır, keyframe'le hareket ettirilebilir. |
 | **Dışa aktarma** | WebM (VP9/VP8 + Opus) ya da tarayıcı destekliyorsa MP4 (H.264 + AAC); yalnızca ses (Opus / AAC). Çözünürlük (1080p, 720p, 4K, dikey, kare, özel), kare hızı, bit hızı, ilerleme çubuğu, önizleme ve indirme. WebM çıktısına süre bilgisi otomatik eklenir. |
 | **Dockable paneller** | İçe Aktarılan Medya, Composer / Editör, Özellikler, Import Oynatıcı ve Zaman Çizelgesi birer panel: sekmesinden tutup başka bir kenara sürüklenebilir, üst üste sekme hâline getirilebilir, kenarlarından boyutlandırılabilir, kapatılıp **Yerleşim** menüsünden geri açılabilir. Düzen tarayıcıda saklanır, menü geçişlerinde ve yeniden açılışta korunur; tek tıkla varsayılana dönülür. |
 | **Kaynak oynatıcı** | Ayarların altındaki ikinci oynatıcı: seçilen, içe aktarılan ya da üzerine sürükleyip bıraktığınız klibi tek başına, kendi kontrolleriyle oynatır ve **Ekle** ile oynatma kafasına yerleştirir. Zaman çizelgesi oynarken sesler çakışmaz; hangisi başlarsa diğeri durur. |
@@ -60,7 +64,7 @@ MediaRecorder desteği kısıtlıdır. Node 20+ gerekir.
 2. Medya kartındaki **＋** ile oynatma kafasına ekleyin, çift tıklayın ya da doğrudan istediğiniz kanala sürükleyin.
    Ses dosyaları otomatik olarak ses kanalına gider; video bir ses kanalına bırakılırsa yalnızca sesi kullanılır.
 3. Klipleri sürükleyin, uçlarından kırpın, **S** ile bölün. Sağ tık menüsünde tüm işlemler vardır.
-4. Bir klibi seçince **Özellikler** panelinde ses, fade, opaklık, ölçek, konum, geçişler ve yazı ayarları görünür.
+4. Bir klibi seçince **Özellikler** panelinde ses, fade, opaklık, ölçek, konum, kırpma/döndürme, efektler, keyframe animasyonu, geçişler ve yazı/büyüteç ayarları görünür.
    Seçtiğiniz medya aynı anda soldaki **Kaynak Oynatıcı**'da açılır; oradan izleyip **Ekle** ile zaman çizelgesine koyabilirsiniz.
 5. **Ses Kaydet** ile mikrofondan seslendirme kaydedin; kayıt oynatma kafasından başlar ve durdurunca ses kanalına eklenir.
 6. **Dışa Aktar** ile biçim, çözünürlük, FPS ve kaliteyi seçip başlatın. Dışa aktarma gerçek zamanlı çalışır
@@ -179,7 +183,8 @@ src/features/video-editor/         ▶ ÖZELLİK MODÜLÜ (host uygulamaya kopya
   engine/serverTranscode.ts        Sunucuda dönüştürme istemcisi (yükle → sorgula → indir), sağlık yoklaması
   engine/diagnostics.ts            Konsol ortam raporu ve içe aktarma izi
   engine/csp.ts                    Güvenlik politikası ihlallerinin kaydı
-  engine/player.ts                 Oynatma motoru: AudioContext saati, Web Audio miks grafı, Canvas kompozit, geçişler, yazı
+  engine/player.ts                 Oynatma motoru: AudioContext saati, Web Audio miks grafı, Canvas kompozit, geçişler, yazı, kırpma/döndürme, efektler, büyüteç
+  engine/keyframes.ts              Keyframe animasyonu: ara değerleme, otomatik keyframe, hazır hareketler
   engine/timeline.ts               Zaman çizelgesi DOM motoru (cetvel, sürükleme/kırpma/yapışma) – React ref ile sarılır
   engine/exporter.ts               MediaRecorder tabanlı dışa aktarma
   engine/webm-fix.ts               WebM çıktısına Duration alanı ekleyen EBML yamalayıcı

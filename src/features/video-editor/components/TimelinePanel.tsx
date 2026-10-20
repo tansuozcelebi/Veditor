@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Copy, Music, Redo2, Scissors, Trash2, Type, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { Copy, Music, Redo2, Scissors, Search, Trash2, Type, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
@@ -9,7 +9,7 @@ import { Timeline, type TimelineHooks } from '../engine/timeline';
 import { useEditor, useI18n, useStoreEvents } from '../hooks/useEditor';
 
 export interface TimelineActions {
-  split: () => void; deleteSelected: () => void; duplicate: () => void; detachAudio: () => void; crossfade: () => void; addText: () => void;
+  split: () => void; deleteSelected: () => void; duplicate: () => void; detachAudio: () => void; crossfade: () => void; addText: () => void; addMagnifier: () => void;
   addTrack: (kind: 'video' | 'audio') => void; onDropMedia: (mediaId: string, trackId: string, time: number) => void; onDropFiles: (files: File[], trackId: string, time: number) => void;
   revealMedia: (mediaId: string) => void;
   /** The marker between two touching clips was clicked. */
@@ -67,12 +67,13 @@ export function TimelinePanel({ actions, timelineRef }: { actions: TimelineActio
           <Button id="btnSplit" variant="outline" size="xs" title={t('edit.splitHint')} onClick={actions.split}><Scissors /> <span className="max-[900px]:hidden">{t('edit.split')}</span></Button>
           <Button id="btnDelete" variant="outline" size="xs" disabled={n === 0} title={t('edit.deleteHint')} onClick={actions.deleteSelected}><Trash2 /> <span className="max-[900px]:hidden">{t('edit.delete')}</span></Button>
           <Button id="btnDuplicate" variant="outline" size="xs" disabled={n === 0} onClick={actions.duplicate}><Copy /> <span className="max-[900px]:hidden">{t('edit.duplicate')}</span></Button>
-          <Button id="btnDetachAudio" variant="outline" size="xs" disabled={!single || single.kind === 'text'} title={t('edit.detachAudioHint')} onClick={actions.detachAudio}><Music /> <span className="max-[900px]:hidden">{t('edit.detachAudio')}</span></Button>
+          <Button id="btnDetachAudio" variant="outline" size="xs" disabled={!single || single.kind !== 'media'} title={t('edit.detachAudioHint')} onClick={actions.detachAudio}><Music /> <span className="max-[900px]:hidden">{t('edit.detachAudio')}</span></Button>
         </div>
         <div className="flex items-center gap-1">
           <Button id="btnAddVideoTrack" variant="outline" size="xs" onClick={() => actions.addTrack('video')}>＋🎞 <span className="max-[900px]:hidden">{t('track.addVideo')}</span></Button>
           <Button id="btnAddAudioTrack" variant="outline" size="xs" onClick={() => actions.addTrack('audio')}>＋🎵 <span className="max-[900px]:hidden">{t('track.addAudio')}</span></Button>
           <Button id="btnAddText" variant="outline" size="xs" title={t('text.addHint')} onClick={actions.addText}><Type /> <span className="max-[900px]:hidden">{t('text.add')}</span></Button>
+          <Button id="btnAddMagnifier" variant="outline" size="xs" title={t('mag.addHint')} onClick={actions.addMagnifier}><Search /> <span className="max-[900px]:hidden">{t('mag.add')}</span></Button>
         </div>
         <div className="ml-auto flex items-center gap-2">
           <Label className="text-muted-foreground gap-1.5 text-xs"><Switch id="snapToggle" checked={snap} onCheckedChange={setSnap} /> <span className="max-[900px]:hidden">{t('timeline.snap')}</span></Label>

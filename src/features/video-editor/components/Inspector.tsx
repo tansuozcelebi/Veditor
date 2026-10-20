@@ -4,11 +4,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { NativeSelect, NativeSelectGroup, NativeSelectOption } from '@/components/ui/native-select';
 import { Field, RangeField, SectionTitle } from './Field';
 import { useEditor, useI18n, useStoreEvents } from '../hooks/useEditor';
-import { useEffect, useReducer, useRef } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { RESOLUTIONS, TRANSITION_GROUPS, FONT_GROUPS, clamp } from '../engine/state';
 import { customFonts, ensureFont, onFontsChange, registerFontFile } from '../engine/fonts';
-import type { Clip, Track, TransitionType } from '../engine/types';
+import type { BlendMode, Clip, KeyframeEase, MagnifierShape, Track, TransitionType } from '../engine/types';
+import { KEYFRAME_EASES, MOTION_PRESETS, animatedAt, keyedPatch, keyframeIndexAt, presetKeyframes, removeKeyframe, setKeyframe, toggleAnimation, type MotionPreset } from '../engine/keyframes';
 import { cn } from '@/lib/utils';
 
 export interface InspectorActions { split: () => void; duplicate: () => void; detachAudio: () => void; deleteSelected: () => void }
@@ -23,8 +24,8 @@ function NumberInput({ value, min, max, step = 0.01, onChange }: { value: number
   );
 }
 
-function Toggle({ on, onClick, children, className }: { on: boolean; onClick: () => void; children: React.ReactNode; className?: string }) {
-  return <Button size="xs" variant={on ? 'default' : 'outline'} className={className} onClick={onClick}>{children}</Button>;
+function Toggle({ on, onClick, children, className, id }: { on: boolean; onClick: () => void; children: React.ReactNode; className?: string; id?: string }) {
+  return <Button id={id} size="xs" variant={on ? 'default' : 'outline'} aria-pressed={on} className={className} onClick={onClick}>{children}</Button>;
 }
 
 export function Inspector({ actions }: { actions: InspectorActions }) {
@@ -53,25 +54,47 @@ function ClipActions({ clip, actions }: { clip: Clip | null; actions: InspectorA
     <div className="flex flex-wrap gap-1.5">
       {clip && <Button size="xs" variant="outline" onClick={actions.split}>✂ {t('edit.split')}</Button>}
       {clip && <Button size="xs" variant="outline" onClick={actions.duplicate}>⧉ {t('edit.duplicate')}</Button>}
-      {clip && clip.kind !== 'text' && <Button size="xs" variant="outline" onClick={actions.detachAudio}>🎵 {t('edit.detachAudio')}</Button>}
+      {clip && clip.kind === 'media' && <Button size="xs" variant="outline" onClick={actions.detachAudio}>🎵 {t('edit.detachAudio')}</Button>}
       <Button size="xs" variant="destructive" onClick={actions.deleteSelected}>🗑 {t('edit.delete')}</Button>
     </div>
   );
 }
 
+/** The playhead time, followed only while `enabled` (an animated layer), so a still inspector does not re-render every frame. */
+function useAnimTime(enabled: boolean) {
+  const { player } = useEditor();
+  const [time, setTime] = useState(player.currentTime);
+  useEffect(() => {
+    if (!enabled) return;
+    setTime(player.currentTime);
+    return player.on('time', (tm: number) => setTime(tm));
+  }, [enabled, player]);
+  return enabled ? time : player.currentTime;
+}
+
 function ClipInspector({ clip: c, actions }: { clip: Clip; actions: InspectorActions }) {
-  const { store } = useEditor();
+  const { store, player } = useEditor();
   const { t } = useI18n();
   const m = c.mediaId ? store.media.get(c.mediaId) : null;
   const track = store.getTrack(c.trackId);
   const isText = c.kind === 'text';
+  const isMag = c.kind === 'magnifier';
+  const animated = c.keyframes.length > 0;
+  const time = useAnimTime(animated);
+  // what the layer looks like at the playhead – with keyframes, that is what the controls show and edit
+  const a = animatedAt(c, time);
   const upd = (patch: Partial<Clip>, silent = false) => store.updateClip(c.id, patch, { silent, history: !silent });
   const live = (patch: Partial<Clip>) => upd(patch, true);
+  // position, scale, rotation and opacity go into a keyframe at the playhead on an animated layer
+  const updA = (patch: Partial<Clip>, silent = false) => upd(keyedPatch(c, patch, player.currentTime), silent);
+  const liveA = (patch: Partial<Clip>) => updA(patch, true);
   const commit = () => { store.pushHistory(); store.changed('inspector'); };
   return (
     <>
       {isText ? (
         <TextInspector clip={c} upd={upd} live={live} commit={commit} />
+      ) : isMag ? (
+        <MagnifierInspector clip={c} upd={upd} live={live} commit={commit} />
       ) : (
         <>
           <Field label={t('inspector.name')}><Input className="h-8" key={c.id} defaultValue={c.name || m?.name || ''} onBlur={(e) => { if (e.target.value !== c.name) upd({ name: e.target.value }); }} /></Field>
@@ -101,23 +124,23 @@ function ClipInspector({ clip: c, actions }: { clip: Clip; actions: InspectorAct
       {track && track.kind === 'video' && (
         <>
           <SectionTitle>{t('inspector.videoSection')}</SectionTitle>
-          <RangeField label={t('inspector.opacity')} value={c.opacity} min={0} max={1} step={0.01} unit="%" onChange={(v) => live({ opacity: v })} onCommit={commit} testId="clip-opacity" />
-          {!isText && (
+          <RangeField label={t('inspector.opacity')} value={a.opacity} min={0} max={1} step={0.01} unit="%" onChange={(v) => liveA({ opacity: v })} onCommit={commit} testId="clip-opacity" />
+          {!isText && !isMag && (
             <Field label={t('inspector.fit')}>
               <NativeSelect size="sm" value={c.fit} onChange={(e) => upd({ fit: e.target.value as Clip['fit'] })}>
                 <NativeSelectOption value="contain">{t('inspector.fitContain')}</NativeSelectOption><NativeSelectOption value="cover">{t('inspector.fitCover')}</NativeSelectOption><NativeSelectOption value="stretch">{t('inspector.fitStretch')}</NativeSelectOption>
               </NativeSelect>
             </Field>
           )}
-          <RangeField label={t('inspector.scale')} value={c.scale} min={0.05} max={3} step={0.01} unit="×" onChange={(v) => live({ scale: v })} onCommit={commit} />
+          <RangeField label={t('inspector.scale')} value={a.scale} min={0.05} max={3} step={0.01} unit="×" onChange={(v) => liveA({ scale: v })} onCommit={commit} />
           <div className="grid grid-cols-2 gap-2.5">
-            <RangeField label={t('inspector.posX')} value={c.x} min={-100} max={100} step={0.5} unit="" onChange={(v) => live({ x: v })} onCommit={commit} />
-            <RangeField label={t('inspector.posY')} value={c.y} min={-100} max={100} step={0.5} unit="" onChange={(v) => live({ y: v })} onCommit={commit} />
+            <RangeField label={t('inspector.posX')} value={a.x} min={-100} max={100} step={0.5} unit="" onChange={(v) => liveA({ x: v })} onCommit={commit} />
+            <RangeField label={t('inspector.posY')} value={a.y} min={-100} max={100} step={0.5} unit="" onChange={(v) => liveA({ y: v })} onCommit={commit} />
           </div>
           <div className="grid grid-cols-3 gap-2.5">
-            <Field label={t('inspector.scale')}><NumberInput value={c.scale} min={0.05} max={10} step={0.05} onChange={(v) => upd({ scale: v })} /></Field>
-            <Field label="X"><NumberInput value={c.x} min={-200} max={200} step={1} onChange={(v) => upd({ x: v })} /></Field>
-            <Field label="Y"><NumberInput value={c.y} min={-200} max={200} step={1} onChange={(v) => upd({ y: v })} /></Field>
+            <Field label={t('inspector.scale')}><NumberInput value={round3(a.scale)} min={0.05} max={10} step={0.05} onChange={(v) => updA({ scale: v })} /></Field>
+            <Field label="X"><NumberInput value={round3(a.x)} min={-200} max={200} step={1} onChange={(v) => updA({ x: v })} /></Field>
+            <Field label="Y"><NumberInput value={round3(a.y)} min={-200} max={200} step={1} onChange={(v) => updA({ y: v })} /></Field>
           </div>
           <p className="text-muted-foreground text-xs leading-relaxed">{t('inspector.canvasHint')}</p>
           <Field label={t('inspector.layoutPresets')}>
@@ -125,14 +148,190 @@ function ClipInspector({ clip: c, actions }: { clip: Clip; actions: InspectorAct
               {([
                 ['inspector.presetFull', { scale: 1, x: 0, y: 0 }], ['inspector.presetPipTL', { scale: 0.33, x: -32, y: -32 }], ['inspector.presetPipTR', { scale: 0.33, x: 32, y: -32 }],
                 ['inspector.presetPipBL', { scale: 0.33, x: -32, y: 32 }], ['inspector.presetPipBR', { scale: 0.33, x: 32, y: 32 }], ['inspector.presetLeft', { scale: 0.5, x: -25, y: 0 }], ['inspector.presetRight', { scale: 0.5, x: 25, y: 0 }],
-              ] as [string, Partial<Clip>][]).map(([k, p]) => <Button key={k} size="xs" variant="outline" onClick={() => upd(isText ? { x: p.x, y: p.y } : { ...p, fit: 'contain' })}>{t(k)}</Button>)}
+              ] as [string, Partial<Clip>][]).map(([k, p]) => <Button key={k} size="xs" variant="outline" onClick={() => updA(isText || isMag ? { x: p.x, y: p.y } : { ...p, fit: 'contain' })}>{t(k)}</Button>)}
             </div>
           </Field>
+          <CropRotateSection clip={c} rotation={a.rotation} upd={upd} updA={updA} liveA={liveA} live={live} commit={commit} />
+          <EffectsSection clip={c} upd={upd} live={live} commit={commit} />
+          <AnimationSection clip={c} time={time} upd={upd} />
           <TransitionSection clip={c} upd={upd} />
         </>
       )}
       <ClipActions clip={c} actions={actions} />
     </>
+  );
+}
+
+const round3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/** Rotation, mirroring and crop of a layer; crop is for pictures (video and images). */
+function CropRotateSection({ clip: c, rotation, upd, updA, liveA, live, commit }: {
+  clip: Clip; rotation: number; upd: Upd; updA: Upd; liveA: (p: Partial<Clip>) => void; live: (p: Partial<Clip>) => void; commit: () => void;
+}) {
+  const { store, player } = useEditor();
+  const { t } = useI18n();
+  useStoreEvents(['crop']);
+  const media = c.kind === 'media';
+  const cropping = store.cropClipId === c.id;
+  const cropped = c.cropL || c.cropT || c.cropR || c.cropB;
+  const turn = (by: number) => updA({ rotation: ((Math.round(rotation + by) + 540) % 360) - 180 });
+  const fit = () => {
+    const p = player.fitCropPatch(c);
+    if (!p) { toast.error(t('crop.notReady')); return; }
+    updA(p);
+  };
+  const crop = (k: 'cropL' | 'cropT' | 'cropR' | 'cropB', other: 'cropL' | 'cropT' | 'cropR' | 'cropB') => (
+    <RangeField testId={'crop-' + k.slice(4).toLowerCase()} label={t('crop.' + k.slice(4).toLowerCase())} value={c[k]} min={0} max={95} step={0.5} unit="pct"
+      onChange={(v) => live({ [k]: Math.min(v, 95 - c[other]) } as Partial<Clip>)} onCommit={commit} />
+  );
+  return (
+    <div id="cropSection" className="flex flex-col gap-2.5">
+      <SectionTitle>{media ? t('crop.section') : t('crop.sectionRotate')}</SectionTitle>
+      <RangeField testId="clip-rotation" label={t('crop.rotation')} value={rotation} min={-180} max={180} step={0.5} unit="" onChange={(v) => liveA({ rotation: v })} onCommit={commit} />
+      <div className="flex flex-wrap items-center gap-1.5">
+        <div className="w-20"><NumberInput value={round3(rotation)} min={-360} max={360} step={1} onChange={(v) => updA({ rotation: ((v + 540) % 360) - 180 })} /></div>
+        <Button id="btnRotLeft" size="xs" variant="outline" title={t('crop.rotLeft')} onClick={() => turn(-90)}>↺ 90°</Button>
+        <Button id="btnRotRight" size="xs" variant="outline" title={t('crop.rotRight')} onClick={() => turn(90)}>↻ 90°</Button>
+        <Toggle on={c.flipH} onClick={() => upd({ flipH: !c.flipH })}>⇋ {t('crop.flipH')}</Toggle>
+        <Toggle on={c.flipV} onClick={() => upd({ flipV: !c.flipV })}>⇵ {t('crop.flipV')}</Toggle>
+      </div>
+      {media && (
+        <>
+          <div className="grid grid-cols-2 gap-2.5">
+            {crop('cropL', 'cropR')}{crop('cropR', 'cropL')}{crop('cropT', 'cropB')}{crop('cropB', 'cropT')}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <Toggle id="btnCropMode" on={cropping} onClick={() => store.setCropMode(cropping ? null : c.id)}>✂ {cropping ? t('crop.done') : t('crop.onCanvas')}</Toggle>
+            <Button id="btnCropFit" size="xs" variant="outline" disabled={!cropped} title={t('crop.fitHint')} onClick={fit}>⤢ {t('crop.fit')}</Button>
+            <Button id="btnCropReset" size="xs" variant="outline" disabled={!cropped} onClick={() => upd({ cropL: 0, cropT: 0, cropR: 0, cropB: 0 })}>⟲ {t('crop.reset')}</Button>
+          </div>
+          <p className="text-muted-foreground text-xs leading-relaxed">{t('crop.hint')}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+const BLEND_MODES: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
+const EFFECT_DEFAULTS = { brightness: 100, contrast: 100, saturation: 100, hue: 0, blur: 0, sepia: 0, grayscale: 0 } satisfies Partial<Clip>;
+
+/** Blend mode and colour adjustments ("Effects & Presets" in After Effects terms). */
+function EffectsSection({ clip: c, upd, live, commit }: { clip: Clip; upd: Upd; live: (p: Partial<Clip>) => void; commit: () => void }) {
+  const { t } = useI18n();
+  const changed = c.blendMode !== 'normal' || (Object.keys(EFFECT_DEFAULTS) as (keyof typeof EFFECT_DEFAULTS)[]).some((k) => c[k] !== EFFECT_DEFAULTS[k]);
+  const looks: [string, Partial<Clip>][] = [
+    ['fx.look.bw', { ...EFFECT_DEFAULTS, grayscale: 100, contrast: 115 }], ['fx.look.sepia', { ...EFFECT_DEFAULTS, sepia: 80, contrast: 105 }],
+    ['fx.look.vivid', { ...EFFECT_DEFAULTS, saturation: 150, contrast: 115 }], ['fx.look.fade', { ...EFFECT_DEFAULTS, contrast: 80, brightness: 110, saturation: 70 }],
+    ['fx.look.cold', { ...EFFECT_DEFAULTS, hue: -15, saturation: 85, brightness: 105 }], ['fx.look.warm', { ...EFFECT_DEFAULTS, sepia: 30, saturation: 120 }],
+  ];
+  return (
+    <div id="effectsSection" className="flex flex-col gap-2.5">
+      <SectionTitle>{t('fx.section')}</SectionTitle>
+      <Field label={t('fx.blend')}>
+        <NativeSelect id="blendMode" size="sm" value={c.blendMode} onChange={(e) => upd({ blendMode: e.target.value as BlendMode })}>
+          {BLEND_MODES.map((b) => <NativeSelectOption key={b} value={b}>{t('fx.blend.' + b)}</NativeSelectOption>)}
+        </NativeSelect>
+      </Field>
+      <div className="grid grid-cols-2 gap-2.5">
+        <RangeField testId="fx-brightness" label={t('fx.brightness')} value={c.brightness} min={0} max={200} step={1} unit="pct" onChange={(v) => live({ brightness: v })} onCommit={commit} />
+        <RangeField testId="fx-contrast" label={t('fx.contrast')} value={c.contrast} min={0} max={200} step={1} unit="pct" onChange={(v) => live({ contrast: v })} onCommit={commit} />
+        <RangeField testId="fx-saturation" label={t('fx.saturation')} value={c.saturation} min={0} max={300} step={1} unit="pct" onChange={(v) => live({ saturation: v })} onCommit={commit} />
+        <RangeField testId="fx-hue" label={t('fx.hue')} value={c.hue} min={-180} max={180} step={1} unit="" onChange={(v) => live({ hue: v })} onCommit={commit} />
+        <RangeField testId="fx-blur" label={t('fx.blur')} value={c.blur} min={0} max={50} step={0.5} unit="" onChange={(v) => live({ blur: v })} onCommit={commit} />
+        <RangeField testId="fx-sepia" label={t('fx.sepia')} value={c.sepia} min={0} max={100} step={1} unit="pct" onChange={(v) => live({ sepia: v })} onCommit={commit} />
+        <RangeField testId="fx-grayscale" label={t('fx.grayscale')} value={c.grayscale} min={0} max={100} step={1} unit="pct" onChange={(v) => live({ grayscale: v })} onCommit={commit} />
+      </div>
+      <Field label={t('fx.looks')}>
+        <div className="flex flex-wrap gap-1.5" data-testid="fx-looks">
+          {looks.map(([k, p]) => <Button key={k} size="xs" variant="outline" onClick={() => upd(p)}>{t(k)}</Button>)}
+          <Button id="btnFxReset" size="xs" variant="outline" disabled={!changed} onClick={() => upd({ ...EFFECT_DEFAULTS, blendMode: 'normal' })}>⟲ {t('fx.reset')}</Button>
+        </div>
+      </Field>
+    </div>
+  );
+}
+
+/** Keyframes for position, scale, rotation and opacity, plus ready-made motions. */
+function AnimationSection({ clip: c, time, upd }: { clip: Clip; time: number; upd: Upd }) {
+  const { player } = useEditor();
+  const { t } = useI18n();
+  const ks = c.keyframes;
+  const local = Math.min(Math.max(0, time - c.start), c.duration);
+  const at = keyframeIndexAt(c, local);
+  const inside = time >= c.start && time <= c.start + c.duration;
+  const seekKey = (dir: number) => {
+    const target = dir < 0 ? [...ks].reverse().find((k) => k.t < local - 1e-3) : ks.find((k) => k.t > local + 1e-3);
+    if (target) player.seek(c.start + Math.min(target.t, Math.max(0, c.duration - 1e-3)));
+  };
+  // the keyframe whose ease shapes the stretch the playhead is in
+  const easeIdx = at >= 0 ? at : ks.reduce((best, k, i) => (k.t <= local ? i : best), -1);
+  const preset = (p: MotionPreset) => upd({ keyframes: presetKeyframes(c, p) });
+  return (
+    <div id="keyframeSection" className="flex flex-col gap-2.5" data-keyframes={ks.length}>
+      <SectionTitle>{t('kf.section')}</SectionTitle>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Toggle id="btnAnimate" on={ks.length > 0} onClick={() => upd(toggleAnimation(c, player.currentTime))}>⏱ {ks.length ? t('kf.on') : t('kf.off')}</Toggle>
+        {ks.length > 0 && <span className="text-muted-foreground text-xs" id="kfCount">{t('kf.count', { n: ks.length })}</span>}
+      </div>
+      {ks.length > 0 && (
+        <>
+          <div className="flex flex-wrap gap-1.5">
+            <Button id="btnKeyPrev" size="xs" variant="outline" title={t('kf.prev')} onClick={() => seekKey(-1)} disabled={!ks.some((k) => k.t < local - 1e-3)}>◀◆</Button>
+            <Button id="btnKeyAdd" size="xs" variant={at >= 0 ? 'default' : 'outline'} disabled={!inside} title={t('kf.addHint')} onClick={() => upd({ keyframes: setKeyframe(c, local) })}>◆ {at >= 0 ? t('kf.here') : t('kf.add')}</Button>
+            <Button id="btnKeyNext" size="xs" variant="outline" title={t('kf.next')} onClick={() => seekKey(1)} disabled={!ks.some((k) => k.t > local + 1e-3)}>◆▶</Button>
+            <Button id="btnKeyDel" size="xs" variant="outline" disabled={at < 0} onClick={() => upd({ keyframes: removeKeyframe(c, local) })}>✕ {t('kf.remove')}</Button>
+          </div>
+          {easeIdx >= 0 && easeIdx < ks.length - 1 && (
+            <Field label={t('kf.ease')}>
+              <NativeSelect id="keyEase" size="sm" value={ks[easeIdx].ease} onChange={(e) => upd({ keyframes: ks.map((k, i) => (i === easeIdx ? { ...k, ease: e.target.value as KeyframeEase } : k)) })}>
+                {KEYFRAME_EASES.map((k) => <NativeSelectOption key={k} value={k}>{t('kf.ease.' + k)}</NativeSelectOption>)}
+              </NativeSelect>
+            </Field>
+          )}
+          <div className="relative h-4 rounded bg-muted" data-testid="kf-strip" title={t('kf.strip')}>
+            {ks.map((k, i) => (
+              <button key={i} type="button" aria-label={t('kf.goto', { t: k.t.toFixed(2) })}
+                className={cn('absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 border border-black/40', i === at ? 'bg-amber-300' : 'bg-sky-400')}
+                style={{ left: `${(Math.min(Math.max(k.t, 0), c.duration) / Math.max(0.001, c.duration)) * 100}%` }}
+                onClick={() => player.seek(c.start + Math.min(Math.max(0, k.t), Math.max(0, c.duration - 1e-3)))} />
+            ))}
+            <div className="pointer-events-none absolute inset-y-0 w-px bg-red-500" style={{ left: `${(local / Math.max(0.001, c.duration)) * 100}%` }} />
+          </div>
+        </>
+      )}
+      <Field label={t('kf.presets')}>
+        <div className="flex flex-wrap gap-1.5" data-testid="motion-presets">
+          {MOTION_PRESETS.map((p) => <Button key={p} size="xs" variant="outline" onClick={() => preset(p)}>{t('kf.preset.' + p)}</Button>)}
+        </div>
+      </Field>
+      <p className="text-muted-foreground text-xs leading-relaxed">{t('kf.hint')}</p>
+    </div>
+  );
+}
+
+const MAG_SHAPES: MagnifierShape[] = ['circle', 'rounded', 'rect'];
+
+/** A magnifier layer: how much it enlarges, how big the lens is and what it looks like. */
+function MagnifierInspector({ clip: c, upd, live, commit }: { clip: Clip; upd: Upd; live: (p: Partial<Clip>) => void; commit: () => void }) {
+  const { t } = useI18n();
+  return (
+    <div id="magnifierSection" className="flex flex-col gap-2.5">
+      <SectionTitle>{t('mag.section')}</SectionTitle>
+      <Field label={t('inspector.name')}><Input className="h-8" key={c.id} defaultValue={c.name} onBlur={(e) => { if (e.target.value !== c.name) upd({ name: e.target.value }); }} /></Field>
+      <RangeField testId="mag-zoom" label={t('mag.zoom')} value={c.magZoom} min={1} max={8} step={0.1} unit="×" onChange={(v) => live({ magZoom: v })} onCommit={commit} />
+      <RangeField testId="mag-size" label={t('mag.size')} value={c.magSize} min={2} max={50} step={0.5} unit="pct" onChange={(v) => live({ magSize: v })} onCommit={commit} />
+      <Field label={t('mag.shape')}>
+        <NativeSelect id="magShape" size="sm" value={c.magShape} onChange={(e) => upd({ magShape: e.target.value as MagnifierShape })}>
+          {MAG_SHAPES.map((s) => <NativeSelectOption key={s} value={s}>{t('mag.shape.' + s)}</NativeSelectOption>)}
+        </NativeSelect>
+      </Field>
+      <div className="grid grid-cols-2 gap-2.5">
+        <Field label={t('mag.borderColor')}><Input type="color" className="h-8 p-1" value={c.magBorderColor} onChange={(e) => live({ magBorderColor: e.target.value })} onBlur={commit} /></Field>
+        <RangeField label={t('mag.border')} value={c.magBorderWidth} min={0} max={3} step={0.05} unit="pct" onChange={(v) => live({ magBorderWidth: v })} onCommit={commit} />
+      </div>
+      <div className="flex gap-1.5"><Toggle on={c.magShadow} onClick={() => upd({ magShadow: !c.magShadow })}>◗ {t('mag.shadow')}</Toggle></div>
+      <p className="text-muted-foreground text-xs leading-relaxed">{t('mag.hint')}</p>
+    </div>
   );
 }
 
