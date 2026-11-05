@@ -1,11 +1,13 @@
 // ===================== Project state, selection and undo/redo =====================
 import { t } from './i18n';
-import type { Clip, Project, Track, TrackKind, MediaItem, PlacementKind, Transition, ProjectFile } from './types';
+import type { Clip, Grade, Marker, Project, Track, TrackKind, MediaItem, PlacementKind, Transition, ProjectFile } from './types';
 export type { Clip, Project, Track, TrackKind, MediaItem, PlacementKind, Transition, ProjectFile } from './types';
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 export const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 export const EPS = 1e-6;
+/** The shortest piece a trim may leave of a clip, in seconds. */
+const MIN_EDIT = 0.05;
 
 export const RESOLUTIONS = [
   { label: '1080p (1920×1080)', w: 1920, h: 1080 },
@@ -31,7 +33,34 @@ export function defaultProject(): Project {
     width: 1920, height: 1080, fps: 30, background: '#000000',
     tracks: [],
     clips: [],
+    markers: [],
   };
+}
+
+/** A neutral grade: every section on, every value at the point where it changes nothing. */
+export function defaultGrade(patch: Partial<Grade> = {}): Grade {
+  return {
+    basicOn: true, temperature: 0, tint: 0, exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, saturation: 100,
+    creativeOn: true, vibrance: 0, fadedFilm: 0, creativeSat: 100, shadowTint: '#808080', highlightTint: '#808080',
+    vignetteOn: true, vignetteAmount: 0, vignetteMidpoint: 50, vignetteRoundness: 0, vignetteFeather: 50,
+    ...patch,
+  };
+}
+
+/** Whether a grade changes the picture at all (an untouched clip skips the grading pass entirely). */
+export function gradeActive(g: Grade | undefined): boolean {
+  if (!g) return false;
+  const n = defaultGrade();
+  const basic = g.basicOn && (['temperature', 'tint', 'exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks', 'saturation'] as const).some((k) => g[k] !== n[k]);
+  const creative = g.creativeOn && (g.vibrance !== 0 || g.fadedFilm !== 0 || g.creativeSat !== 100 || g.shadowTint.toLowerCase() !== '#808080' || g.highlightTint.toLowerCase() !== '#808080');
+  return basic || creative || (g.vignetteOn && g.vignetteAmount !== 0);
+}
+
+/** Marker colours, as on a professional timeline. */
+export const MARKER_COLORS = ['#22c55e', '#ef4444', '#a855f7', '#f97316', '#eab308', '#ffffff', '#3b82f6', '#06b6d4'];
+
+export function defaultMarker(patch: Partial<Marker> = {}): Marker {
+  return { id: uid(), time: 0, duration: 0, name: '', color: MARKER_COLORS[0], comment: '', ...patch };
 }
 
 /** Transitions in the order the picker shows them, grouped by family. */
@@ -64,23 +93,24 @@ export function defaultClip(patch: Partial<Clip> = {}): Clip {
     reflection: false, reflectionOpacity: 0.4, reflectionGap: 0, reflectionLength: 60, letterSpacing: 0,
     rotation: 0, cropL: 0, cropT: 0, cropR: 0, cropB: 0, flipH: false, flipV: false, blendMode: 'normal',
     brightness: 100, contrast: 100, saturation: 100, hue: 0, blur: 0, sepia: 0, grayscale: 0,
-    keyframes: [],
+    keyframes: [], grade: defaultGrade(),
     magZoom: 2, magSize: 18, magShape: 'circle', magBorderColor: '#ffffff', magBorderWidth: 0.5, magShadow: true,
     ...patch,
   };
   // keyframes are edited by replacing the array; a copy keeps duplicates and splits independent
   c.keyframes = (patch.keyframes ?? []).map((k) => ({ ...k }));
+  c.grade = defaultGrade(patch.grade);
   c.transIn = defaultTransition(patch.transIn);
   c.transOut = defaultTransition(patch.transOut);
   return c;
 }
 
-export interface Selection { clipIds: Set<string>; trackId: string | null }
+export interface Selection { clipIds: Set<string>; trackId: string | null; markerId: string | null }
 
 export class Store extends Emitter {
   project: Project = defaultProject();
   media = new Map<string, MediaItem>();
-  selection: Selection = { clipIds: new Set(), trackId: null };
+  selection: Selection = { clipIds: new Set(), trackId: null, markerId: null };
   history: string[] = [];
   future: string[] = [];
   maxHistory = 100;
@@ -128,6 +158,7 @@ export class Store extends Emitter {
   _pruneSelection() {
     for (const id of [...this.selection.clipIds]) if (!this.getClip(id)) this.selection.clipIds.delete(id);
     if (this.selection.trackId && !this.getTrack(this.selection.trackId)) this.selection.trackId = null;
+    if (this.selection.markerId && !this.getMarker(this.selection.markerId)) this.selection.markerId = null;
     this.emit('selection');
   }
 
@@ -278,6 +309,96 @@ export class Store extends Emitter {
     this.changed('duplicate');
     return copy;
   }
+  // ---------- ripple edits ----------
+  /** Removes clips and closes the hole each one leaves on its track: what follows moves left by its length. */
+  rippleDelete(ids: string[]) {
+    const gone = ids.map((id) => this.getClip(id)).filter((c): c is Clip => !!c && !this.getTrack(c.trackId)?.locked);
+    if (!gone.length) return 0;
+    this.pushHistory();
+    // the latest first, so each shift is measured on the track as it then is
+    gone.sort((a, b) => b.start - a.start);
+    for (const c of gone) {
+      this.project.clips = this.project.clips.filter((x) => x.id !== c.id);
+      const end = c.start + c.duration;
+      for (const x of this.project.clips) if (x.trackId === c.trackId && x.start >= end - EPS) x.start = Math.max(0, x.start - c.duration);
+    }
+    this._pruneSelection();
+    this.changed('rippleDelete');
+    return gone.length;
+  }
+  /** Closes the empty stretch at `time` on each of the tracks: what follows moves left to meet what is before. Returns how many gaps closed. */
+  closeGap(trackIds: string[], time: number): number {
+    const gaps = trackIds.map((id) => ({ id, gap: this.gapAt(id, time) })).filter((x) => x.gap && isFinite(x.gap.hi) && x.gap.hi - x.gap.lo > 1e-3 && !this.getTrack(x.id)?.locked);
+    if (!gaps.length) return 0;
+    this.pushHistory();
+    for (const { id, gap } of gaps) for (const x of this.project.clips) if (x.trackId === id && x.start >= gap!.hi - EPS) x.start -= gap!.hi - gap!.lo;
+    this.changed('closeGap');
+    return gaps.length;
+  }
+  /**
+   * Ripple trim to the playhead (Q / W): the part of each clip under `time` before (Q) or after (W) the
+   * playhead is cut away and everything after it on the track moves left to close the hole.
+   */
+  rippleTrim(clipIds: string[], time: number, side: 'start' | 'end'): number {
+    const hit = clipIds.map((id) => this.getClip(id)).filter((c): c is Clip => !!c && time > c.start + MIN_EDIT && time < c.start + c.duration - MIN_EDIT && !this.getTrack(c.trackId)?.locked);
+    if (!hit.length) return 0;
+    this.pushHistory();
+    for (const c of hit) {
+      const end = c.start + c.duration;
+      const cut = side === 'start' ? time - c.start : end - time;
+      if (side === 'start') {
+        if (c.kind === 'media') c.offset += cut;
+        c.keyframes = c.keyframes.map((k) => ({ ...k, t: k.t - cut }));
+        c.fadeIn = Math.min(c.fadeIn, c.duration - cut);
+      } else c.fadeOut = Math.min(c.fadeOut, c.duration - cut);
+      c.duration -= cut;
+      for (const x of this.project.clips) if (x.id !== c.id && x.trackId === c.trackId && x.start >= end - EPS) x.start -= cut;
+    }
+    this.changed('rippleTrim');
+    return hit.length;
+  }
+
+  // ---------- markers ----------
+  getMarker(id: string | null | undefined): Marker | null { return this.project.markers.find((m) => m.id === id) || null; }
+  sortedMarkers(): Marker[] { return this.project.markers.slice().sort((a, b) => a.time - b.time); }
+  addMarker(time: number, patch: Partial<Marker> = {}): Marker {
+    this.pushHistory();
+    const n = this.project.markers.length + 1;
+    const m = defaultMarker({ time: Math.max(0, time), name: t('marker.default', { n }), ...patch });
+    this.project.markers.push(m);
+    this.selection.markerId = m.id;
+    this.changed('marker');
+    this.emit('selection');
+    return m;
+  }
+  updateMarker(id: string, patch: Partial<Marker>, { silent = false }: { silent?: boolean } = {}) {
+    const m = this.getMarker(id); if (!m) return;
+    if (!silent) this.pushHistory();
+    Object.assign(m, patch);
+    if (!silent) this.changed('marker');
+  }
+  removeMarker(id: string) {
+    if (!this.getMarker(id)) return;
+    this.pushHistory();
+    this.project.markers = this.project.markers.filter((m) => m.id !== id);
+    this._pruneSelection();
+    this.changed('marker');
+  }
+  selectMarker(id: string | null) { this.selection.markerId = id; if (id) { this.selection.clipIds = new Set(); this.selection.trackId = null; } this.emit('selection'); }
+  /** The marker after (dir 1) or before (dir −1) a time. */
+  adjacentMarker(time: number, dir: 1 | -1): Marker | null {
+    const ms = this.sortedMarkers();
+    return (dir > 0 ? ms.find((m) => m.time > time + 1e-3) : ms.reverse().find((m) => m.time < time - 1e-3)) || null;
+  }
+  /** Markers as CSV (name, in, out, duration, colour, comment), timecodes at the project frame rate. */
+  markersCsv(): string {
+    const fps = this.project.fps;
+    const q = (v: string) => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    const rows = [['Name', 'In', 'Out', 'Duration', 'Color', 'Comment']];
+    for (const m of this.sortedMarkers()) rows.push([m.name, formatTime(m.time, { fps }), formatTime(m.time + m.duration, { fps }), formatTime(m.duration, { fps }), m.color, m.comment]);
+    return rows.map((r) => r.map(q).join(',')).join('\r\n') + '\r\n';
+  }
+
   projectDuration() { return this.project.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0); }
 
   // ---------- media ----------
@@ -294,6 +415,7 @@ export class Store extends Emitter {
   // ---------- selection ----------
   selectClips(ids: string[], { add = false }: { add?: boolean } = {}) {
     if (!add) this.selection.clipIds = new Set();
+    if (ids.length) this.selection.markerId = null;
     for (const id of ids) if (this.getClip(id)) this.selection.clipIds.add(id);
     if (ids.length) this.selection.trackId = null;
     this.emit('selection');
@@ -303,8 +425,8 @@ export class Store extends Emitter {
     this.selection.trackId = null;
     this.emit('selection');
   }
-  selectTrack(id: string) { this.selection.clipIds = new Set(); this.selection.trackId = id; this.emit('selection'); }
-  clearSelection() { this.selection.clipIds = new Set(); this.selection.trackId = null; this.emit('selection'); }
+  selectTrack(id: string) { this.selection.clipIds = new Set(); this.selection.trackId = id; this.selection.markerId = null; this.emit('selection'); }
+  clearSelection() { this.selection.clipIds = new Set(); this.selection.trackId = null; this.selection.markerId = null; this.emit('selection'); }
   setCropMode(id: string | null) { if (this.cropClipId !== id) { this.cropClipId = id; this.emit('crop'); } }
   selectedClips(): Clip[] { return [...this.selection.clipIds].map((id) => this.getClip(id)).filter((c): c is Clip => !!c); }
 
@@ -320,8 +442,9 @@ export class Store extends Emitter {
     this.project = { ...defaultProject(), ...project };
     this.project.clips = (this.project.clips || []).map((c) => defaultClip(c));
     this.project.tracks = (this.project.tracks || []).map((tr) => ({ ...tr, opacity: tr.opacity ?? 1 }));
+    this.project.markers = (this.project.markers || []).map((m) => defaultMarker(m));
     this.history = []; this.future = [];
-    this.selection = { clipIds: new Set(), trackId: null };
+    this.selection = { clipIds: new Set(), trackId: null, markerId: null };
     this.dirty = false;
     this.emit('history');
     this.emit('selection');

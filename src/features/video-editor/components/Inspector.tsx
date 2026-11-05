@@ -6,9 +6,11 @@ import { Field, RangeField, SectionTitle } from './Field';
 import { useEditor, useI18n, useStoreEvents } from '../hooks/useEditor';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { RESOLUTIONS, TRANSITION_GROUPS, FONT_GROUPS, clamp } from '../engine/state';
+import { RESOLUTIONS, TRANSITION_GROUPS, FONT_GROUPS, MARKER_COLORS, clamp, defaultGrade, formatTime, gradeActive } from '../engine/state';
+import { cuesFromClips, downloadText, formatCaptions } from '../engine/captions';
+import { GRADE_PRESETS } from '../engine/grade';
 import { customFonts, ensureFont, onFontsChange, registerFontFile } from '../engine/fonts';
-import type { BlendMode, Clip, KeyframeEase, MagnifierShape, Track, TransitionType } from '../engine/types';
+import type { BlendMode, Clip, Grade, Marker, KeyframeEase, MagnifierShape, Track, TransitionType } from '../engine/types';
 import { KEYFRAME_EASES, MOTION_PRESETS, animatedAt, keyedPatch, keyframeIndexAt, presetKeyframes, removeKeyframe, setKeyframe, toggleAnimation, type MotionPreset } from '../engine/keyframes';
 import { cn } from '@/lib/utils';
 
@@ -34,7 +36,8 @@ export function Inspector({ actions }: { actions: InspectorActions }) {
   useStoreEvents();
   const clips = store.selectedClips();
   const track = store.selection.trackId ? store.getTrack(store.selection.trackId) : null;
-  const title = clips.length ? t('inspector.clip') : track ? t('inspector.track') : t('inspector.project');
+  const marker = !clips.length && !track ? store.getMarker(store.selection.markerId) : null;
+  const title = clips.length ? t('inspector.clip') : track ? t('inspector.track') : marker ? t('marker.title') : t('inspector.project');
   return (
     <aside className="bg-card flex min-h-0 min-w-0 flex-col" id="inspectorPanel">
       <div className="border-b px-3 py-2"><h2 className="text-sm font-semibold" id="inspectorTitle">{title}</h2></div>
@@ -42,7 +45,8 @@ export function Inspector({ actions }: { actions: InspectorActions }) {
         {clips.length === 1 && <ClipInspector clip={clips[0]} actions={actions} />}
         {clips.length > 1 && (<><p className="text-muted-foreground text-xs">{t('inspector.clipCount', { n: clips.length })}</p><ClipActions clip={null} actions={actions} /></>)}
         {clips.length === 0 && track && <TrackInspector track={track} />}
-        {clips.length === 0 && !track && <ProjectInspector onChange={() => player.render(player.currentTime)} />}
+        {marker && <MarkerInspector marker={marker} />}
+        {clips.length === 0 && !track && !marker && <ProjectInspector onChange={() => player.render(player.currentTime)} />}
       </div>
     </aside>
   );
@@ -153,6 +157,7 @@ function ClipInspector({ clip: c, actions }: { clip: Clip; actions: InspectorAct
           </Field>
           <CropRotateSection clip={c} rotation={a.rotation} upd={upd} updA={updA} liveA={liveA} live={live} commit={commit} />
           <EffectsSection clip={c} upd={upd} live={live} commit={commit} />
+          {c.kind === 'media' && <ColorSection clip={c} upd={upd} live={live} commit={commit} />}
           <AnimationSection clip={c} time={time} upd={upd} />
           <TransitionSection clip={c} upd={upd} />
         </>
@@ -247,6 +252,65 @@ function EffectsSection({ clip: c, upd, live, commit }: { clip: Clip; upd: Upd; 
           <Button id="btnFxReset" size="xs" variant="outline" disabled={!changed} onClick={() => upd({ ...EFFECT_DEFAULTS, blendMode: 'normal' })}>⟲ {t('fx.reset')}</Button>
         </div>
       </Field>
+    </div>
+  );
+}
+
+/**
+ * Colour grading in the order a colourist works – Basic Correction, Creative, Vignette – each with
+ * its own on/off switch, after FilmCraft's Lumetri panel. Runs on the GPU (see engine/grade.ts).
+ */
+function ColorSection({ clip: c, upd, live, commit }: { clip: Clip; upd: Upd; live: (p: Partial<Clip>) => void; commit: () => void }) {
+  const { t } = useI18n();
+  const g = c.grade;
+  const set = (p: Partial<Grade>, silent = false) => (silent ? live : upd)({ grade: { ...c.grade, ...p } });
+  const slider = (k: keyof Grade, min: number, max: number, step: number, unit: '' | 'pct' = '') => (
+    <RangeField testId={'grade-' + k} label={t('grade.' + k)} value={g[k] as number} min={min} max={max} step={step} unit={unit}
+      onChange={(v) => set({ [k]: v } as Partial<Grade>, true)} onCommit={commit} />
+  );
+  const head = (k: 'basicOn' | 'creativeOn' | 'vignetteOn', label: string) => (
+    <div className="mt-1 flex items-center justify-between gap-2">
+      <span className="text-xs font-medium">{label}</span>
+      <Toggle id={'grade-' + k} on={g[k]} onClick={() => set({ [k]: !g[k] } as Partial<Grade>)}>{g[k] ? t('grade.on') : t('grade.off')}</Toggle>
+    </div>
+  );
+  return (
+    <div id="colorSection" className="flex flex-col gap-2.5" data-active={gradeActive(g)}>
+      <SectionTitle>{t('grade.section')}</SectionTitle>
+      <div className="flex gap-1.5">
+        <NativeSelect id="gradePreset" size="sm" value="" onChange={(e) => { const p = GRADE_PRESETS.find((x) => x.key === e.target.value); if (p) upd({ grade: defaultGrade(p.grade) }); }}>
+          <NativeSelectOption value="">{t('grade.presets')}</NativeSelectOption>
+          {GRADE_PRESETS.map((p) => <NativeSelectOption key={p.key} value={p.key}>{t('grade.preset.' + p.key)}</NativeSelectOption>)}
+        </NativeSelect>
+        <Button id="btnGradeReset" size="sm" variant="outline" className="h-8 shrink-0" disabled={!gradeActive(g)} onClick={() => upd({ grade: defaultGrade() })}>⟲ {t('grade.reset')}</Button>
+      </div>
+      {head('basicOn', t('grade.basic'))}
+      {g.basicOn && (
+        <div className="grid grid-cols-2 gap-2.5">
+          {slider('temperature', -100, 100, 1)}{slider('tint', -100, 100, 1)}
+          {slider('exposure', -4, 4, 0.05)}{slider('contrast', -100, 100, 1)}
+          {slider('highlights', -100, 100, 1)}{slider('shadows', -100, 100, 1)}
+          {slider('whites', -100, 100, 1)}{slider('blacks', -100, 100, 1)}
+          {slider('saturation', 0, 200, 1, 'pct')}
+        </div>
+      )}
+      {head('creativeOn', t('grade.creative'))}
+      {g.creativeOn && (
+        <div className="grid grid-cols-2 gap-2.5">
+          {slider('vibrance', -100, 100, 1)}{slider('fadedFilm', 0, 100, 1)}
+          {slider('creativeSat', 0, 200, 1, 'pct')}<div />
+          <Field label={t('grade.shadowTint')}><Input type="color" className="h-8 p-1" value={g.shadowTint} onChange={(e) => set({ shadowTint: e.target.value }, true)} onBlur={commit} /></Field>
+          <Field label={t('grade.highlightTint')}><Input type="color" className="h-8 p-1" value={g.highlightTint} onChange={(e) => set({ highlightTint: e.target.value }, true)} onBlur={commit} /></Field>
+        </div>
+      )}
+      {head('vignetteOn', t('grade.vignette'))}
+      {g.vignetteOn && (
+        <div className="grid grid-cols-2 gap-2.5">
+          {slider('vignetteAmount', -5, 5, 0.1)}{slider('vignetteMidpoint', 0, 100, 1)}
+          {slider('vignetteRoundness', -100, 100, 1)}{slider('vignetteFeather', 0, 100, 1)}
+        </div>
+      )}
+      <p className="text-muted-foreground text-xs leading-relaxed">{t('grade.hint')}</p>
     </div>
   );
 }
@@ -346,6 +410,15 @@ function TrackInspector({ track: tr }: { track: Track }) {
       <p className="text-muted-foreground text-xs">{t('kind.' + tr.kind)} · {t('inspector.clipCount', { n: store.clipsOnTrack(tr.id).length })}</p>
       <RangeField label={t('inspector.volume')} value={tr.volume} min={0} max={2} step={0.01} unit="%" onChange={(v) => store.updateTrack(tr.id, { volume: v }, { silent: true })} onCommit={() => { store.pushHistory(); store.changed('track'); }} />
       {tr.kind === 'video' && <RangeField testId="track-opacity" label={t('inspector.trackOpacity')} value={tr.opacity ?? 1} min={0} max={1} step={0.01} unit="%" onChange={(v) => store.updateTrack(tr.id, { opacity: v }, { silent: true })} onCommit={() => { store.pushHistory(); store.changed('track'); }} />}
+      {tr.kind === 'video' && store.clipsOnTrack(tr.id).some((c) => c.kind === 'text') && (
+        <Field label={t('cc.export')}>
+          <div className="flex gap-1.5" data-testid="caption-export">
+            {(['srt', 'vtt'] as const).map((f) => (
+              <Button key={f} id={'btnExport' + f.toUpperCase()} size="xs" variant="outline" onClick={() => downloadText(`${tr.name.replace(/[\\/:*?"<>|]+/g, '_')}.${f}`, formatCaptions(cuesFromClips(store.clipsOnTrack(tr.id)), f), f === 'srt' ? 'application/x-subrip' : 'text/vtt')}>⇩ {f.toUpperCase()}</Button>
+            ))}
+          </div>
+        </Field>
+      )}
       <div className="flex flex-wrap gap-1.5">
         {toggles.map(([k, label, ico]) => <Toggle key={k} on={!!tr[k]} onClick={() => store.updateTrack(tr.id, { [k]: !tr[k] } as Partial<Track>)}>{ico} {t(label)}</Toggle>)}
       </div>
@@ -360,7 +433,7 @@ function ProjectInspector({ onChange }: { onChange: () => void }) {
   const p = store.project;
   const commit = (patch: Partial<typeof p>) => { store.pushHistory(); Object.assign(p, patch); store.changed('project'); onChange(); };
   const matched = RESOLUTIONS.find((r) => r.w === p.width && r.h === p.height);
-  const rows: [string, string][] = [['Space', 'sc.play'], ['S', 'sc.split'], ['T', 'sc.text'], ['Delete', 'sc.delete'], ['Ctrl+Z', 'sc.undo'], ['Ctrl+Y', 'sc.redo'], ['Ctrl+D', 'sc.dup'], ['← / →', 'sc.frame'], ['Home / End', 'sc.home'], ['Ctrl+Scroll', 'sc.zoom']];
+  const rows: [string, string][] = [['Space', 'sc.play'], ['S', 'sc.split'], ['T', 'sc.text'], ['Delete', 'sc.delete'], ['Shift+Delete', 'sc.rippleDelete'], ['Q / W', 'sc.rippleTrim'], ['Ctrl+K', 'sc.addEdit'], ['M', 'sc.marker'], ['Shift+M', 'sc.nextMarker'], ['Ctrl+Z', 'sc.undo'], ['Ctrl+Y', 'sc.redo'], ['Ctrl+D', 'sc.dup'], ['← / →', 'sc.frame'], ['Home / End', 'sc.home'], ['Ctrl+Scroll', 'sc.zoom']];
   return (
     <>
       <p className="text-muted-foreground text-xs">{t('inspector.noSelection')}</p>
@@ -378,11 +451,67 @@ function ProjectInspector({ onChange }: { onChange: () => void }) {
         <NativeSelect size="sm" value={String(p.fps)} onChange={(e) => commit({ fps: Number(e.target.value) })}>{[24, 25, 30, 50, 60].map((f) => <NativeSelectOption key={f} value={String(f)}>{f}</NativeSelectOption>)}</NativeSelect>
       </Field>
       <Field label={t('inspector.background')}><Input type="color" className="h-8 w-full p-1" value={p.background} onChange={(e) => commit({ background: e.target.value })} /></Field>
+      <MarkerList />
       <SectionTitle>{t('inspector.shortcuts')}</SectionTitle>
       <div className="text-muted-foreground grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-1 text-xs">
         {rows.map(([k, l]) => (<div key={k} className={cn('contents')}><kbd className="bg-muted rounded border px-1 font-mono text-[11px]">{k}</kbd><span>{t(l)}</span></div>))}
       </div>
     </>
+  );
+}
+
+/** Every marker, nearest first in time, with a jump and the CSV export. */
+function MarkerList() {
+  const { store, player } = useEditor();
+  const { t } = useI18n();
+  const ms = store.sortedMarkers();
+  const fps = store.project.fps;
+  return (
+    <div id="markerList" className="flex flex-col gap-1.5">
+      <SectionTitle>{t('marker.list', { n: ms.length })}</SectionTitle>
+      {!ms.length && <p className="text-muted-foreground text-xs">{t('marker.none')}</p>}
+      {ms.map((m) => (
+        <button key={m.id} type="button" className="hover:bg-muted flex items-center gap-2 rounded px-1.5 py-1 text-left text-xs" onClick={() => { player.seek(m.time); store.selectMarker(m.id); }}>
+          <span className="size-2.5 shrink-0 rotate-45" style={{ background: m.color }} />
+          <span className="text-muted-foreground font-mono tabular-nums">{formatTime(m.time, { fps })}</span>
+          <span className="truncate">{m.name}</span>
+        </button>
+      ))}
+      {ms.length > 0 && (
+        <Button id="btnMarkersCsv" size="xs" variant="outline" className="w-fit" onClick={() => downloadText(`${(store.project.name || 'project').replace(/[\\/:*?"<>|]+/g, '_')}-markers.csv`, store.markersCsv(), 'text/csv')}>⇩ {t('marker.exportCsv')}</Button>
+      )}
+    </div>
+  );
+}
+
+/** A marker: name, colour, duration and comment; delete; step to the neighbours. */
+function MarkerInspector({ marker: m }: { marker: Marker }) {
+  const { store, player } = useEditor();
+  const { t } = useI18n();
+  const go = (dir: 1 | -1) => { const n = store.adjacentMarker(m.time, dir); if (n) { player.seek(n.time); store.selectMarker(n.id); } };
+  return (
+    <div id="markerInspector" className="flex flex-col gap-2.5">
+      <Field label={t('inspector.name')}><Input id="markerName" className="h-8" key={m.id + m.name} defaultValue={m.name} onBlur={(e) => { if (e.target.value !== m.name) store.updateMarker(m.id, { name: e.target.value }); }} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} /></Field>
+      <div className="grid grid-cols-2 gap-2.5">
+        <Field label={t('marker.time')}><NumberInput value={m.time} min={0} step={1 / store.project.fps} onChange={(v) => store.updateMarker(m.id, { time: Math.max(0, v) })} /></Field>
+        <Field label={t('marker.duration')}><NumberInput value={m.duration} min={0} step={0.1} onChange={(v) => store.updateMarker(m.id, { duration: Math.max(0, v) })} /></Field>
+      </div>
+      <Field label={t('marker.color')}>
+        <div className="flex flex-wrap gap-1.5" role="group">
+          {MARKER_COLORS.map((col) => (
+            <button key={col} type="button" aria-label={col} onClick={() => store.updateMarker(m.id, { color: col })}
+              className={cn('size-6 rounded-sm border border-white/20', m.color === col && 'ring-ring ring-2 ring-offset-1 ring-offset-transparent')} style={{ background: col }} />
+          ))}
+        </div>
+      </Field>
+      <Field label={t('marker.comment')}><Textarea key={m.id} defaultValue={m.comment} onBlur={(e) => { if (e.target.value !== m.comment) store.updateMarker(m.id, { comment: e.target.value }); }} /></Field>
+      <div className="flex flex-wrap gap-1.5">
+        <Button size="xs" variant="outline" onClick={() => go(-1)}>◀ {t('marker.prev')}</Button>
+        <Button size="xs" variant="outline" onClick={() => go(1)}>{t('marker.next')} ▶</Button>
+        <Button id="btnMarkerDelete" size="xs" variant="destructive" onClick={() => store.removeMarker(m.id)}>🗑 {t('edit.delete')}</Button>
+      </div>
+      <p className="text-muted-foreground text-xs leading-relaxed">{t('marker.hint')}</p>
+    </div>
   );
 }
 

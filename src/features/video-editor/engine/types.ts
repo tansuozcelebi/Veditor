@@ -18,6 +18,21 @@ export type BlendMode =
 export type KeyframeEase = 'linear' | 'ease' | 'ease-in' | 'ease-out' | 'hold';
 export type MagnifierShape = 'circle' | 'rounded' | 'rect';
 
+/**
+ * Colour grade of a picture layer, after the Lumetri-style grading panel of FilmCraft
+ * (github.com/storytold/filmcraft, MIT/Apache-2.0): Basic Correction, Creative and Vignette, each with
+ * its own on/off switch. Sliders are in the panel's units (mostly −100…100, exposure in stops).
+ */
+export interface Grade {
+  basicOn: boolean; temperature: number; tint: number; exposure: number; contrast: number;
+  highlights: number; shadows: number; whites: number; blacks: number; saturation: number;
+  creativeOn: boolean; vibrance: number; fadedFilm: number; creativeSat: number; shadowTint: string; highlightTint: string;
+  vignetteOn: boolean; vignetteAmount: number; vignetteMidpoint: number; vignetteRoundness: number; vignetteFeather: number;
+}
+
+/** A named point (or range) on the timeline. */
+export interface Marker { id: string; time: number; duration: number; name: string; color: string; comment: string }
+
 /** The properties a keyframe animates, with their value at one moment. */
 export interface KeyframeValues { x: number; y: number; scale: number; rotation: number; opacity: number }
 /** `t` is seconds from the clip's start; `ease` shapes the way to the next keyframe. */
@@ -58,11 +73,14 @@ export interface Clip {
   keyframes: Keyframe[];
   /** Magnifier layer: zoom factor, lens radius (% of frame height), shape, border and shadow. */
   magZoom: number; magSize: number; magShape: MagnifierShape; magBorderColor: string; magBorderWidth: number; magShadow: boolean;
+  /** Colour grade (picture layers). */
+  grade: Grade;
 }
 
 export interface Project {
   name: string; width: number; height: number; fps: number; background: string;
   tracks: Track[]; clips: Clip[];
+  markers: Marker[];
 }
 
 export interface Thumbnail { time: number; url: string }

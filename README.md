@@ -38,6 +38,11 @@ kopyalanıp takılabilir. Ayrıntılar için [Başka bir uygulamaya entegrasyon]
 | **Efektler** | After Effects tarzı **karışım modları** (Çarp, Ekran, Kaplama, Fark, Renk… 16 mod), parlaklık, kontrast, doygunluk, ton, bulanıklık, sepya, siyah-beyaz ve hazır görünümler (Siyah-beyaz, Sepya, Canlı, Soluk, Soğuk, Sıcak). |
 | **Keyframe animasyonu** | Konum, ölçek, döndürme ve opaklık için keyframe'ler: "Animasyonu başlat" ile açılır, açıkken yapılan her değişiklik (panelden veya önizlemede sürükleyerek) oynatma kafasında keyframe oluşturur; geçiş eğrileri (doğrusal, Easy Ease, yavaş başla/bitir, tut), önceki/sonraki keyframe'e atlama, zaman çizelgesinde elmas işaretleri ve hazır hareketler (Ken Burns yakınlaş/uzaklaş, sola/sağa kaydır, dönerek gel, zıplayarak gel). |
 | **Büyüteç katmanı** | "Büyüteç" düğmesiyle eklenen katman, altındaki tüm katmanları mercek içinde büyütür: büyütme oranı, mercek boyutu, şekil (daire, yuvarlak köşeli, kare), çerçeve rengi/kalınlığı ve gölge; önizlemede taşınır, keyframe'le hareket ettirilebilir. |
+| **Renk düzenleme (Lumetri)** | Video/görsel katmanlarında GPU (WebGL2) üzerinde çalışan renk paneli: **Temel düzeltme** (sıcaklık, tint, pozlama, kontrast, parlak alanlar, gölgeler, beyazlar, siyahlar, doygunluk), **Yaratıcı** (canlılık, solmuş film, yaratıcı doygunluk, gölge/parlak alan tonlama) ve **Vinyet** (miktar, orta nokta, yuvarlaklık, yumuşaklık); her bölüm ayrı açılıp kapanır, 13 hazır görünüm. Matematik FilmCraft'tan uyarlandı (aşağıya bakın). |
+| **Scope ve ses ölçer** | Ayrı panel: dalga formu (luma), RGB parade, vektörskop (renk hedefleri ve ten çizgisi) ve histogram; karışımın **EBU R128 / BS.1770** ses yüksekliği: anlık, kısa süreli ve entegre LUFS, sol/sağ tepe, hedef seçimi (−14 YouTube/Spotify, −16, −23 yayın, −24). |
+| **İşaretçiler** | **M** ile oynatma kafasına işaretçi, cetvelde renkli bayrak ve ad; tıklayınca seçilir, Özellikler panelinde ad/renk/süre/not düzenlenir, **Shift+M** / **Ctrl+Shift+M** ile sonraki/önceki; tüm işaretçiler **CSV** olarak dışa aktarılır. |
+| **Ripple düzenleme** | **Ripple Sil** (Shift+Delete: silinen klibin boşluğu kapanır), **Boşluğu Kapat**, **Q / W** ile oynatma kafasına kadar ripple kırpma, **Ctrl+K** ile tüm kanallarda kesme. |
+| **Altyazı (SRT / WebVTT)** | "Altyazı" düğmesiyle SRT veya VTT dosyası yeni bir altyazı kanalına (her satır bir yazı klibi, altyazı biçiminde) aktarılır; bir kanalın yazı klipleri Özellikler panelinden SRT veya WebVTT olarak dışa aktarılır. Dışa aktarılan videoya yakılmış olarak çıkar. |
 | **Dışa aktarma** | WebM (VP9/VP8 + Opus) ya da tarayıcı destekliyorsa MP4 (H.264 + AAC); yalnızca ses (Opus / AAC). Çözünürlük (1080p, 720p, 4K, dikey, kare, özel), kare hızı, bit hızı, ilerleme çubuğu, önizleme ve indirme. WebM çıktısına süre bilgisi otomatik eklenir. |
 | **Dockable paneller** | İçe Aktarılan Medya, Composer / Editör, Özellikler, Import Oynatıcı ve Zaman Çizelgesi birer panel: sekmesinden tutup başka bir kenara sürüklenebilir, üst üste sekme hâline getirilebilir, kenarlarından boyutlandırılabilir, kapatılıp **Yerleşim** menüsünden geri açılabilir. Düzen tarayıcıda saklanır, menü geçişlerinde ve yeniden açılışta korunur; tek tıkla varsayılana dönülür. |
 | **Kaynak oynatıcı** | Ayarların altındaki ikinci oynatıcı: seçilen, içe aktarılan ya da üzerine sürükleyip bıraktığınız klibi tek başına, kendi kontrolleriyle oynatır ve **Ekle** ile oynatma kafasına yerleştirir. Zaman çizelgesi oynarken sesler çakışmaz; hangisi başlarsa diğeri durur. |
@@ -185,6 +190,9 @@ src/features/video-editor/         ▶ ÖZELLİK MODÜLÜ (host uygulamaya kopya
   engine/csp.ts                    Güvenlik politikası ihlallerinin kaydı
   engine/player.ts                 Oynatma motoru: AudioContext saati, Web Audio miks grafı, Canvas kompozit, geçişler, yazı, kırpma/döndürme, efektler, büyüteç
   engine/keyframes.ts              Keyframe animasyonu: ara değerleme, otomatik keyframe, hazır hareketler
+  engine/grade.ts                  Renk düzenleme (WebGL2, FilmCraft Lumetri hesaplarından uyarlandı)
+  engine/loudness.ts               EBU R128 / BS.1770 ses yüksekliği ölçümü
+  engine/captions.ts               SRT / WebVTT okuma ve yazma
   engine/timeline.ts               Zaman çizelgesi DOM motoru (cetvel, sürükleme/kırpma/yapışma) – React ref ile sarılır
   engine/exporter.ts               MediaRecorder tabanlı dışa aktarma
   engine/webm-fix.ts               WebM çıktısına Duration alanı ekleyen EBML yamalayıcı
@@ -481,6 +489,15 @@ türlerini ayarlar; hedef klasör bu uygulamaya ayrılmış olmalıdır.
 - MP4 çıktısı yalnızca tarayıcı `MediaRecorder` ile `video/mp4` destekliyorsa listelenir (Chrome 126+ birçok platformda destekler).
 - Proje dosyası medya içermez; açarken dosyalar ada göre yeniden eşleştirilir.
 - Hız değiştirme (yavaş/hızlı çekim) bu sürümde yoktur.
+
+## Teşekkür: FilmCraft
+
+Renk düzenleme, scope'lar, ses yüksekliği ölçümü, işaretçiler, ripple düzenleme ve altyazı içe/dışa
+aktarma, [FilmCraft](https://github.com/storytold/filmcraft)'tan (ArtCraft ekibi; MIT veya Apache-2.0
+lisanslı, Rust ile yazılmış açık kaynak profesyonel video editörü) örnek alınarak eklendi. Renk
+düzenleme shader'ı FilmCraft'ın `crates/render/src/effects.rs` içindeki Lumetri hesaplarından,
+hazır renk görünümleri `crates/render/src/lumetri_presets.rs` değerlerinden uyarlanmıştır
+(Copyright (c) 2026 ArtCraft Team and the FilmCraft contributors, MIT License – lisans metni: [`licenses/filmcraft-MIT.txt`](licenses/filmcraft-MIT.txt)).
 
 ## Lisans
 

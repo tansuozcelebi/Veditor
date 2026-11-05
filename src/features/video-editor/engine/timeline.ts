@@ -3,7 +3,7 @@ import { clamp, formatDurationShort, type Store } from './state';
 import { PEAKS_PER_SECOND } from './media';
 import { t } from './i18n';
 import type { Player } from './player';
-import type { Clip, MediaItem, Track } from './types';
+import type { Clip, Marker, MediaItem, Track } from './types';
 
 export interface TimelineElements {
   body: HTMLElement; rulerWrap: HTMLElement; ruler: HTMLCanvasElement; headers: HTMLElement;
@@ -42,7 +42,7 @@ export class Timeline {
     this._bind();
     this._unsub.push(
       store.on('change', () => this.render()),
-      store.on('selection', () => this._applySelection()),
+      store.on('selection', () => { this._applySelection(); this._drawRuler(); }),
       store.on('media', () => this._refreshClipContents()),
       player.on('time', (tm: number) => this._positionPlayhead(tm, true)),
     );
@@ -343,6 +343,33 @@ export class Timeline {
     // project end marker
     const end = this.store.projectDuration();
     if (end > 0) { const x = Math.round(this.timeToX(end)) + 0.5; g.strokeStyle = 'rgba(255,255,255,.5)'; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); }
+    // markers: a coloured flag, a bar for a ranged one, the name beside it when there is room
+    const sel = this.store.selection.markerId;
+    const ms = this.store.sortedMarkers();
+    ms.forEach((m, i) => {
+      const x = Math.round(this.timeToX(m.time)) + 0.5;
+      if (m.duration > 0) { g.fillStyle = m.color + '55'; g.fillRect(x, h - 9, Math.max(2, this.timeToX(m.duration)), 7); }
+      g.fillStyle = m.color;
+      g.beginPath(); g.moveTo(x - 5, h - 14); g.lineTo(x + 5, h - 14); g.lineTo(x + 5, h - 7); g.lineTo(x, h - 2); g.lineTo(x - 5, h - 7); g.closePath(); g.fill();
+      if (m.id === sel) { g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.stroke(); g.lineWidth = 1; }
+      const next = ms[i + 1];
+      const room = (next ? this.timeToX(next.time) : width) - x - 10;
+      if (m.name && room > 30) {
+        g.font = '10px sans-serif';
+        let label = m.name;
+        while (label.length > 1 && g.measureText(label).width > room) label = label.slice(0, -1);
+        // on a dark plate, so the name reads over the ruler's own numbers
+        const tw = g.measureText(label).width;
+        g.fillStyle = 'rgba(20,20,24,.92)'; g.fillRect(x + 6, h - 16, tw + 4, 12);
+        g.fillStyle = 'rgba(255,255,255,.9)'; g.fillText(label, x + 8, h - 15);
+      }
+    });
+  }
+  /** The marker drawn under a ruler x position (content pixels), if any. */
+  markerAtX(x: number) {
+    let best: Marker | null = null, bd = 7;
+    for (const m of this.store.project.markers) { const d = Math.abs(this.timeToX(m.time) - x); if (d < bd) { bd = d; best = m; } }
+    return best;
   }
   _positionPlayhead(tm: number, autoScroll: boolean) {
     const { body, playhead } = this.els;
@@ -361,7 +388,14 @@ export class Timeline {
   // ---------- interactions ----------
   _bind() {
     const { rulerWrap, body } = this.els;
-    rulerWrap.addEventListener('pointerdown', (e) => { if (e.button === 0) this._scrubStart(e); });
+    rulerWrap.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      // a marker's flag selects the marker and puts the playhead on it
+      const m = this.markerAtX(e.clientX - rulerWrap.getBoundingClientRect().left);
+      if (m) { e.preventDefault(); if (this.player.playing) this.player.pause(); this.player.seek(m.time); this.store.selectMarker(m.id); return; }
+      if (this.store.selection.markerId) this.store.selectMarker(null);
+      this._scrubStart(e);
+    });
     body.addEventListener('scroll', () => this._positionPlayhead(this.player.currentTime, false), { passive: true });
     // the playhead itself is a handle: grabbing it scrubs, and never starts a clip drag or a pan underneath
     const grip = this.els.playhead.querySelector('.tl-playhead-hit') as HTMLElement | null;
@@ -413,7 +447,7 @@ export class Timeline {
   }
 
   _snapPoints(excludeIds: string[]) {
-    const pts = [0, this.player.currentTime];
+    const pts = [0, this.player.currentTime, ...this.store.project.markers.map((m) => m.time)];
     for (const c of this.store.project.clips) if (!excludeIds.includes(c.id)) pts.push(c.start, c.start + c.duration);
     return pts;
   }
