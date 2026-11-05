@@ -16,6 +16,7 @@ import { chooseFormat, playableFormats, probeServer, resetServerProbe, setServer
 import { cspViolations, isLocalMediaBlock, onCspViolation } from '../engine/csp';
 import { diagnostics, log, logDiagnostics } from '../engine/diagnostics';
 import type { Timeline } from '../engine/timeline';
+import { parseCaptions } from '../engine/captions';
 import type { Clip, ExportResult, MediaItem, ProjectFile, Track } from '../engine/types';
 import { cn } from '@/lib/utils';
 import '../editor.css';
@@ -131,6 +132,58 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
     const ids = [...store.selection.clipIds].filter((id) => !store.getTrack(store.getClip(id)?.trackId)?.locked);
     if (ids.length) store.removeClips(ids);
   }, [store]);
+  /** Delete that closes the hole: what follows on each track moves left (Shift+Delete). */
+  const rippleDeleteSelected = useCallback(() => {
+    if (!store.rippleDelete([...store.selection.clipIds])) toast.info(t('edit.nothingSelected'));
+  }, [store, t]);
+  /** Closes the empty stretch under the playhead on the selected clip's track, or on every track. */
+  const closeGap = useCallback(() => {
+    const tm = player.currentTime;
+    const sel = store.selectedClips()[0];
+    const tracks = sel ? [sel.trackId!] : store.project.tracks.map((tr) => tr.id);
+    // a selected clip closes the gap in front of it
+    if (!store.closeGap(tracks, sel ? Math.max(0, sel.start - 1e-3) : tm)) toast.info(t('edit.noGap'));
+  }, [store, player, t]);
+  /** Ripple trim to the playhead: Q cuts what is before it, W what is after it. */
+  const rippleTrim = useCallback((side: 'start' | 'end') => {
+    const tm = player.currentTime;
+    const sel = store.selectedClips().filter((c) => tm > c.start && tm < c.start + c.duration);
+    const ids = (sel.length ? sel : store.project.clips.filter((c) => tm > c.start && tm < c.start + c.duration)).map((c) => c.id);
+    if (!store.rippleTrim(ids, tm, side)) return;
+    if (side === 'start') { const c = store.getClip(ids[0]); if (c) player.seek(c.start); }
+  }, [store, player]);
+  /** Add edit (Ctrl+K): a cut at the playhead through every unlocked track. */
+  const addEditAll = useCallback(() => {
+    const tm = player.currentTime;
+    const under = store.project.clips.filter((c) => tm > c.start + 0.01 && tm < c.start + c.duration - 0.01 && !store.getTrack(c.trackId)?.locked);
+    for (const c of under) store.splitClipAt(c.id, tm);
+  }, [store, player]);
+  /** Subtitles from an SRT / WebVTT file: a caption track on top, one subtitle-styled text clip per cue. */
+  const importCaptions = useCallback(async (file: File) => {
+    let cues;
+    try { cues = parseCaptions(await file.text()); } catch { cues = []; }
+    if (!cues.length) { toast.error(t('cc.importEmpty', { name: file.name })); return null; }
+    store.pushHistory();
+    const track = store.addTrack('video', `${t('cc.track')} – ${file.name.replace(/\.(srt|vtt)$/i, '')}`, { silent: true });
+    for (const q of cues) {
+      store.addClip({
+        kind: 'text', trackId: track.id, name: q.text.split('\n')[0], text: q.text, start: q.start, duration: Math.max(0.1, q.end - q.start),
+        fontSize: 5, y: 38, bold: false, shadow: false, bgEnabled: true, bgColor: '#000000', bgOpacity: 0.6, fontFamily: 'Arial',
+        transIn: { type: 'none', duration: 0.2 }, transOut: { type: 'none', duration: 0.2 },
+      }, { silent: true });
+    }
+    store.changed('captions');
+    store.selectTrack(track.id);
+    toast.success(t('cc.imported', { n: cues.length }));
+    return track;
+  }, [store, t]);
+
+  const addMarker = useCallback(() => {
+    const m = store.addMarker(player.currentTime);
+    toast.success(t('marker.added', { name: m.name }));
+  }, [store, player, t]);
+  const gotoMarker = useCallback((dir: 1 | -1) => { const m = store.adjacentMarker(player.currentTime, dir); if (m) { player.seek(m.time); store.selectMarker(m.id); } }, [store, player]);
+
   const duplicateSelected = useCallback(() => { for (const c of store.selectedClips()) { const d = store.duplicateClip(c.id); if (d) store.selectClips([d.id]); } }, [store]);
   const detachAudioSelected = useCallback(() => {
     const c = store.selectedClips()[0];
@@ -239,7 +292,12 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
       else if (ctrl && e.key.toLowerCase() === 'a') { e.preventDefault(); store.selectClips(store.project.clips.map((c) => c.id)); }
       else if (e.key === 's' || e.key === 'S') { e.preventDefault(); splitSelected(); }
       else if (e.key === 't' || e.key === 'T') { e.preventDefault(); addTextClip(); }
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && e.shiftKey) { e.preventDefault(); rippleDeleteSelected(); }
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && store.selection.markerId && !store.selection.clipIds.size) { e.preventDefault(); store.removeMarker(store.selection.markerId); }
       else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); }
+      else if (ctrl && e.key.toLowerCase() === 'k') { e.preventDefault(); addEditAll(); }
+      else if (!ctrl && (e.key === 'q' || e.key === 'Q')) { e.preventDefault(); rippleTrim('start'); }
+      else if (!ctrl && (e.key === 'w' || e.key === 'W')) { e.preventDefault(); rippleTrim('end'); }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); if (e.shiftKey) player.seek(player.currentTime - 1); else player.stepFrame(-1); }
       else if (e.key === 'ArrowRight') { e.preventDefault(); if (e.shiftKey) player.seek(player.currentTime + 1); else player.stepFrame(1); }
       else if (e.key === 'Home') { e.preventDefault(); player.seek(0); }
@@ -250,23 +308,26 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
       else if (e.key === '+' || e.key === '=') tl?.zoomBy(1.3, player.currentTime);
       else if (e.key === '-' || e.key === '_') tl?.zoomBy(1 / 1.3, player.currentTime);
       else if (e.key === 'Escape') store.clearSelection();
-      else if (e.key === 'm' || e.key === 'M') for (const c of store.selectedClips()) store.updateClip(c.id, { muted: !c.muted });
+      else if ((e.key === 'm' || e.key === 'M') && ctrl && e.shiftKey) { e.preventDefault(); gotoMarker(-1); }
+      else if ((e.key === 'm' || e.key === 'M') && e.shiftKey) { e.preventDefault(); gotoMarker(1); }
+      else if ((e.key === 'm' || e.key === 'M') && e.altKey) for (const c of store.selectedClips()) store.updateClip(c.id, { muted: !c.muted });
+      else if ((e.key === 'm' || e.key === 'M') && !ctrl) { e.preventDefault(); addMarker(); }
     };
     document.addEventListener('keydown', onKey);
     const onUnload = (e: BeforeUnloadEvent) => { if (store.dirty && store.project.clips.length) { e.preventDefault(); } };
     window.addEventListener('beforeunload', onUnload);
     return () => { document.removeEventListener('keydown', onKey); window.removeEventListener('beforeunload', onUnload); };
-  }, [store, player, splitSelected, deleteSelected, duplicateSelected, saveProject, addTextClip]);
+  }, [store, player, splitSelected, deleteSelected, duplicateSelected, saveProject, addTextClip, rippleDeleteSelected, rippleTrim, addEditAll, addMarker, gotoMarker]);
 
   // ---------- project load: reset view ----------
   useEffect(() => store.on('change', (ev?: { reason?: string }) => { if (ev?.reason === 'load') { player.render(player.currentTime); timelineRef.current?.zoomFit(); } }), [store, player]);
 
   // ---------- debug / test handle ----------
   useEffect(() => {
-    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, dock, addMediaToTimeline, addTextClip, addMagnifierClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable }, server: { probeServer, transcodeOnServer, setServerToken, resetServerProbe, chooseFormat, playableFormats }, diagnostics: () => logDiagnostics(CODEC_CORE_URL), rawDiagnostics: () => diagnostics(CODEC_CORE_URL) };
+    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, dock, addMediaToTimeline, addTextClip, addMagnifierClip, importCaptions, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable }, server: { probeServer, transcodeOnServer, setServerToken, resetServerProbe, chooseFormat, playableFormats }, diagnostics: () => logDiagnostics(CODEC_CORE_URL), rawDiagnostics: () => diagnostics(CODEC_CORE_URL) };
     log('debug handle ready – window.veditor (diagnostics(), store, player, importFiles …)');
     return () => { delete (window as any).veditor; };
-  }, [store, player, exporter, dock, addMediaToTimeline, addTextClip, addMagnifierClip, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, importFiles]);
+  }, [store, player, exporter, dock, addMediaToTimeline, addTextClip, addMagnifierClip, importCaptions, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, importFiles]);
 
   /** Brings the properties panel into view – reopening it if it was closed, switching tabs on a phone. */
   const openInspector = () => {
@@ -303,7 +364,7 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
     return () => { off(); window.removeEventListener('pointerdown', down, true); window.removeEventListener('pointerup', up, true); window.removeEventListener('pointercancel', up, true); };
   }, [phone, dock, store]);
 
-  const actions = { split: splitSelected, duplicate: duplicateSelected, detachAudio: detachAudioSelected, deleteSelected, crossfade: crossfadeSelected, addText: () => addTextClip(), addMagnifier: () => addMagnifierClip() };
+  const actions = { split: splitSelected, duplicate: duplicateSelected, detachAudio: detachAudioSelected, deleteSelected, crossfade: crossfadeSelected, addText: () => addTextClip(), addMagnifier: () => addMagnifierClip(), rippleDelete: rippleDeleteSelected, closeGap, addMarker, importCaptions };
 
   // Every panel is a dockable panel: it can be dragged to another edge, stacked into tabs, resized,
   // closed and reopened. The arrangement is remembered, and the top bar can put it back.

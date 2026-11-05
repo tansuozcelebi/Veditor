@@ -9,6 +9,7 @@ import { Preview } from './Preview';
 import { Inspector } from './Inspector';
 import { SourcePlayer } from './SourcePlayer';
 import { TimelinePanel } from './TimelinePanel';
+import { ScopesPanel } from './ScopesPanel';
 import { useI18n } from '../hooks/useEditor';
 import { t as translate } from '../engine/i18n';
 import { cn } from '@/lib/utils';
@@ -16,7 +17,7 @@ import { cn } from '@/lib/utils';
 /** Where the arrangement is remembered. Bump the suffix when the set of panels changes. */
 const LAYOUT_KEY = 'veditor.layout.v1';
 
-export type PanelId = 'library' | 'preview' | 'inspector' | 'source' | 'timeline';
+export type PanelId = 'library' | 'preview' | 'inspector' | 'source' | 'timeline' | 'scopes';
 
 /** The props each panel needs; they come from the editor shell, not from dockview's serialized state. */
 export interface DockPanelProps {
@@ -37,7 +38,7 @@ function usePanelProps(): DockPanelProps {
 
 /** Panel titles follow the interface language. */
 const PANEL_TITLE: Record<PanelId, string> = {
-  library: 'library.title', preview: 'panel.preview', inspector: 'inspector.title', source: 'source.title', timeline: 'panel.timeline',
+  library: 'library.title', preview: 'panel.preview', inspector: 'inspector.title', source: 'source.title', timeline: 'panel.timeline', scopes: 'scopes.title',
 };
 
 function LibraryPanel() { return <MediaLibrary {...usePanelProps().library} />; }
@@ -45,8 +46,9 @@ function PreviewPanel() { return <Preview {...usePanelProps().preview} />; }
 function InspectorPanel() { return <Inspector {...usePanelProps().inspector} />; }
 function SourcePanel() { return <SourcePlayer {...usePanelProps().source} />; }
 function TimelineDockPanel() { return <TimelinePanel {...usePanelProps().timeline} />; }
+function ScopesDockPanel() { return <ScopesPanel />; }
 
-const components = { library: LibraryPanel, preview: PreviewPanel, inspector: InspectorPanel, source: SourcePanel, timeline: TimelineDockPanel };
+const components = { library: LibraryPanel, preview: PreviewPanel, inspector: InspectorPanel, source: SourcePanel, timeline: TimelineDockPanel, scopes: ScopesDockPanel };
 
 /** The arrangement a first-time user sees: settings and the source monitor on the left. */
 function buildDefaultLayout(api: DockviewApi) {
@@ -56,6 +58,8 @@ function buildDefaultLayout(api: DockviewApi) {
   api.addPanel({ id: 'source', component: 'source', title: translate(PANEL_TITLE.source), position: { referencePanel: 'inspector', direction: 'below' }, initialHeight: 300 });
   api.addPanel({ id: 'library', component: 'library', title: translate(PANEL_TITLE.library), position: { referencePanel: 'preview', direction: 'right' }, initialWidth: 300 });
   api.addPanel({ id: 'timeline', component: 'timeline', title: translate(PANEL_TITLE.timeline), position: { direction: 'below' }, initialHeight: 320 });
+  // the scopes share the media panel's place, as a tab behind it
+  api.addPanel({ id: 'scopes', component: 'scopes', title: translate(PANEL_TITLE.scopes), position: { referencePanel: 'library', direction: 'within' }, inactive: true });
   // initialWidth/initialHeight only reserve space while the grid is being built – on a reset the
   // existing grid redistributes them – so the final proportions are set explicitly.
   api.getPanel('inspector')?.group.api.setSize({ width: 330 });
@@ -69,7 +73,8 @@ function buildDefaultLayout(api: DockviewApi) {
 function ensureAllPanels(api: DockviewApi) {
   for (const id of Object.keys(PANEL_TITLE) as PanelId[]) {
     if (api.getPanel(id)) continue;
-    api.addPanel({ id, component: id, title: translate(PANEL_TITLE[id]), position: { direction: id === 'timeline' ? 'below' : 'right' }, inactive: true });
+    const beside = id === 'scopes' ? api.getPanel('library') : undefined;
+    api.addPanel({ id, component: id, title: translate(PANEL_TITLE[id]), position: beside ? { referencePanel: 'library', direction: 'within' } : { direction: id === 'timeline' ? 'below' : 'right' }, inactive: true });
   }
 }
 
@@ -138,7 +143,8 @@ export function EditorDock({ panels, onHandle, className }: { panels: DockPanelP
     if (!api) return;
     const panel = api.getPanel(id);
     if (panel) { panel.api.close(); return; }
-    api.addPanel({ id, component: id, title: translate(PANEL_TITLE[id]), position: { direction: id === 'timeline' ? 'below' : 'right' } });
+    const beside = id === 'scopes' && api.getPanel('library');
+    api.addPanel({ id, component: id, title: translate(PANEL_TITLE[id]), position: beside ? { referencePanel: 'library', direction: 'within' } : { direction: id === 'timeline' ? 'below' : 'right' } });
   }, []);
 
   const onReady = useCallback((event: DockviewReadyEvent) => {
@@ -192,10 +198,10 @@ export function EditorDock({ panels, onHandle, className }: { panels: DockPanelP
 }
 
 /** Panels a phone shows under the preview, one at a time. */
-const MOBILE_TABS: Exclude<PanelId, 'preview'>[] = ['timeline', 'inspector', 'library', 'source'];
+const MOBILE_TABS: Exclude<PanelId, 'preview'>[] = ['timeline', 'inspector', 'library', 'source', 'scopes'];
 export type MobileTab = (typeof MOBILE_TABS)[number];
 
-const MOBILE_COMPONENTS: Record<MobileTab, () => React.ReactElement> = { timeline: TimelineDockPanel, inspector: InspectorPanel, library: LibraryPanel, source: SourcePanel };
+const MOBILE_COMPONENTS: Record<MobileTab, () => React.ReactElement> = { timeline: TimelineDockPanel, inspector: InspectorPanel, library: LibraryPanel, source: SourcePanel, scopes: ScopesDockPanel };
 
 /**
  * The workspace on a phone: docking five panels side by side does not fit a 400-pixel screen, so the

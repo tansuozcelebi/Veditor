@@ -1,5 +1,7 @@
 // ===================== Playback engine: canvas compositor + Web Audio mixer =====================
-import { clamp, type Store } from './state';
+import { clamp, gradeActive, type Store } from './state';
+import { Grader } from './grade';
+import { LoudnessMeter } from './loudness';
 import { ensureFont } from './fonts';
 import { animatedAt } from './keyframes';
 import type { Clip, Track, TransitionType } from './types';
@@ -20,7 +22,7 @@ export interface Rect { x: number; y: number; w: number; h: number }
 /** Where a layer sits: its rectangle before rotation, the rotation (degrees) around its centre, and – for cropped media – the uncropped picture. */
 export interface LayerFrame extends Rect { rotation: number; full: Rect | null }
 /** A cropped media layer: the part of the source drawn, and where (`crop`), inside the uncropped picture (`full`). */
-interface MediaGeom { full: Rect; crop: Rect; sx: number; sy: number; sw: number; sh: number; el: CanvasImageSource }
+interface MediaGeom { full: Rect; crop: Rect; sx: number; sy: number; sw: number; sh: number; el: CanvasImageSource; nw: number; nh: number }
 interface TextLayout { lines: string[]; fontPx: number; lh: number; blockW: number; blockH: number; cx: number; cy: number; left: number; pad: number; bx: number; by: number; bw: number; bh: number }
 
 const blankFx = (): TransitionFx => ({ alpha: 1, dx: 0, dy: 0, scale: 1, scaleX: 1, rotate: 0, wipe: null, shape: null, blur: 0, pixel: 0, overlay: null });
@@ -111,6 +113,8 @@ export class Player extends Emitter {
   host: HTMLElement;
   audio: AudioContext | null = null; // created lazily on the first user gesture
   mixBus!: GainNode; monitorGain!: GainNode; recDest!: MediaStreamAudioDestinationNode;
+  /** Loudness of the programme mix, created with the audio graph. */
+  meter: LoudnessMeter | null = null;
   nodes = new Map<string, MediaNode>();
   trackGains = new Map<string, GainNode>();
   playing = false;
@@ -127,6 +131,7 @@ export class Player extends Emitter {
   private _pixCanvas: HTMLCanvasElement | null = null;
   private _reflCanvas: HTMLCanvasElement | null = null;
   private _magCanvas: HTMLCanvasElement | null = null;
+  private _grader: Grader | null | undefined;
   constructor(store: Store, canvas: HTMLCanvasElement, host: HTMLElement) {
     super();
     this.store = store;
@@ -162,6 +167,7 @@ export class Player extends Emitter {
     this.mixBus.connect(this.monitorGain);
     this.monitorGain.connect(ctx.destination);
     this.mixBus.connect(this.recDest);
+    this.meter = new LoudnessMeter(ctx, this.mixBus);
     this._applyMonitor();
     // attach the audio graph to elements that were created before the context existed
     // (they were kept muted); re-using them avoids reloading and re-decoding the media
@@ -607,7 +613,7 @@ export class Player extends Emitter {
     return {
       full: { x: r.x, y: r.y, w: r.w, h: r.h },
       crop: { x: r.x + r.w * left, y: r.y + r.h * top, w: r.w * k.w, h: r.h * k.h },
-      sx: nw * k.l, sy: nh * k.t, sw: Math.max(1, nw * k.w), sh: Math.max(1, nh * k.h), el: r.el,
+      sx: nw * k.l, sy: nh * k.t, sw: Math.max(1, nw * k.w), sh: Math.max(1, nh * k.h), el: r.el, nw, nh,
     };
   }
 
@@ -687,6 +693,13 @@ export class Player extends Emitter {
     if (!geo) return;
     const r = geo.crop;
     if (r.w < 0.5 || r.h < 0.5) return;
+    // a graded layer is drawn from its graded frame (which may be smaller than the source)
+    let src = geo.el, sx = geo.sx, sy = geo.sy, sw = geo.sw, sh = geo.sh;
+    if (gradeActive(clip.grade)) {
+      if (this._grader === undefined) this._grader = Grader.create();
+      const graded = this._grader?.apply(geo.el as TexImageSource, geo.nw, geo.nh, clip.grade) ?? null;
+      if (graded) { const k = graded.width / geo.nw; src = graded; sx *= k; sy *= k; sw *= k; sh *= k; }
+    }
     const g = this.ctx2d;
     g.save();
     g.globalAlpha = clamp(clip.opacity * trackOpacity * fx.alpha, 0, 1);
@@ -708,11 +721,11 @@ export class Player extends Emitter {
         if (pc.width !== pw || pc.height !== ph) { pc.width = pw; pc.height = ph; }
         const pg = pc.getContext('2d')!;
         pg.imageSmoothingEnabled = true;
-        pg.drawImage(geo.el, geo.sx, geo.sy, geo.sw, geo.sh, 0, 0, pw, ph);
+        pg.drawImage(src, sx, sy, sw, sh, 0, 0, pw, ph);
         g.imageSmoothingEnabled = false;
         g.drawImage(pc, 0, 0, pw, ph, r.x, r.y, r.w, r.h);
         g.imageSmoothingEnabled = true;
-      } else g.drawImage(geo.el, geo.sx, geo.sy, geo.sw, geo.sh, r.x, r.y, r.w, r.h);
+      } else g.drawImage(src, sx, sy, sw, sh, r.x, r.y, r.w, r.h);
       if (fx.overlay && fx.overlay.alpha > 0) {
         g.filter = 'none';
         g.globalAlpha = clamp(clip.opacity * trackOpacity * fx.alpha * fx.overlay.alpha, 0, 1);

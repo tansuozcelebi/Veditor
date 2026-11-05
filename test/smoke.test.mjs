@@ -469,6 +469,130 @@ try {
   check('the toolbar adds a magnifier layer with its own settings', magUi.kind === 'magnifier' && magUi.label.includes('🔍'), JSON.stringify(magUi));
   await page.evaluate(({ id, mediaId }) => { const { store } = window.veditor; const tr = store.getClip(id).trackId; store.removeMedia(mediaId); store.removeTrack(tr); store.clearSelection(); }, card);
 
+  // ---- after FilmCraft: colour grading, scopes, loudness, markers, ripple edits, captions ----
+  const graded = await page.evaluate(async () => {
+    const { store, player, importFiles } = window.veditor;
+    player.pause();
+    const cv = document.createElement('canvas'); cv.width = 320; cv.height = 180;
+    const cg = cv.getContext('2d'); cg.fillStyle = '#808080'; cg.fillRect(0, 0, 320, 180); cg.fillStyle = '#c03030'; cg.fillRect(0, 0, 80, 180);
+    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+    const [m] = await importFiles([new File([blob], 'greycard.png', { type: 'image/png' })]);
+    await new Promise((r) => { const img = store.media.get(m.id).image; if (!img || img.complete) r(); else img.onload = r; });
+    const free = store.projectDuration() + 1;
+    const top = store.addTrack('video');
+    store.project.tracks.splice(store.project.tracks.indexOf(top), 1); store.project.tracks.unshift(top);
+    const c = store.addClip({ trackId: top.id, mediaId: m.id, name: 'greycard', start: free, duration: 3 });
+    player._syncNodes();
+    const at = free + 1, g = player.canvas.getContext('2d');
+    const px = (x, y) => { player.render(at); return [...g.getImageData(x, y, 1, 1).data.slice(0, 3)]; };
+    const grade = (p) => store.updateClip(c.id, { grade: { ...store.getClip(c.id).grade, ...p } }, { silent: true });
+    const out = { neutral: px(1200, 540), red: px(200, 540) };
+    grade({ temperature: 60 }); out.warm = px(1200, 540);
+    grade({ temperature: 0, exposure: 1 }); out.bright = px(1200, 540);
+    grade({ exposure: 0, saturation: 0 }); out.mono = px(200, 540);
+    grade({ saturation: 100, vignetteAmount: -4, vignetteMidpoint: 30 }); out.centre = px(960, 540); out.corner = px(1880, 1040);
+    out.gpu = !!document.createElement('canvas').getContext('webgl2');
+    store.removeClips([c.id]); store.removeTrack(top.id); store.removeMedia(m.id);
+    return out;
+  });
+  const gr = graded;
+  check('the colour grade warms, brightens, desaturates and vignettes the picture (GPU)',
+    gr.gpu && Math.abs(gr.neutral[0] - gr.neutral[2]) < 4 && gr.warm[0] > gr.warm[2] + 15 && gr.bright[0] > gr.neutral[0] + 30
+      && Math.abs(gr.mono[0] - gr.mono[1]) < 6 && Math.abs(gr.mono[1] - gr.mono[2]) < 6 && gr.corner[0] < gr.centre[0] - 25,
+    JSON.stringify(gr));
+
+  // loudness of a known tone: 1 kHz at −20 dBFS peak reads about −23 LUFS (BS.1770's 1 kHz reference)
+  const loud = await page.evaluate(async () => {
+    const { player } = window.veditor;
+    const ctx = player.ensureAudio(); await ctx.resume();
+    const osc = ctx.createOscillator(); osc.frequency.value = 1000;
+    const amp = ctx.createGain(); amp.gain.value = 0.1;
+    const merge = ctx.createChannelMerger(2);
+    osc.connect(amp); amp.connect(merge, 0, 0); amp.connect(merge, 0, 1);
+    const tap = ctx.createGain(); merge.connect(tap);
+    const { LoudnessMeter } = { LoudnessMeter: player.meter.constructor };
+    const meter = new LoudnessMeter(ctx, tap);
+    osc.start();
+    await new Promise((r) => setTimeout(r, 900));
+    let rd = null;
+    for (let i = 0; i < 6; i++) { await new Promise((r) => setTimeout(r, 100)); rd = meter.sample(); }
+    osc.stop(); tap.disconnect();
+    return { m: rd.momentary, peak: rd.peak, running: ctx.state };
+  });
+  // stereo tone at −23 LUFS per channel sums to about −20 LUFS
+  check('the loudness meter reads a −20 dBFS stereo 1 kHz tone at about −20 LUFS, peak −20 dBFS',
+    Math.abs(loud.m - -20) < 1.2 && Math.abs(loud.peak[0] - -20) < 1 && Math.abs(loud.peak[1] - -20) < 1, JSON.stringify(loud));
+
+  // the scopes panel draws the composed frame
+  await page.locator('.dv-tab', { hasText: 'Scope' }).first().click();
+  await page.waitForSelector('#scopeCanvas', { timeout: 5000 });
+  await page.waitForTimeout(500);
+  const scopeLit = async () => page.evaluate(() => { const c = document.getElementById('scopeCanvas'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 16) if (d[i] + d[i + 1] + d[i + 2] > 120) n++; return { n, mode: c.dataset.mode }; });
+  const wave = await scopeLit();
+  await page.selectOption('#scopeMode', 'vectorscope');
+  await page.waitForTimeout(500);
+  const vec = await scopeLit();
+  await page.selectOption('#scopeMode', 'waveform');
+  check('the scopes panel shows a waveform and a vectorscope of the frame, with loudness meters', wave.n > 50 && vec.mode === 'vectorscope' && vec.n > 20 && !!(await page.$('#loudnessMeter #loudI')), JSON.stringify({ wave, vec }));
+  await page.locator('.dv-tab', { hasText: 'Medya' }).first().click().catch(() => {});
+
+  // markers from the keyboard, on the ruler, in the inspector and as CSV
+  await page.evaluate(() => { const { player, store } = window.veditor; player.pause(); store.clearSelection(); player.seek(1.25); document.activeElement?.blur?.(); });
+  await page.keyboard.press('m');
+  await page.evaluate(() => window.veditor.player.seek(3));
+  await page.keyboard.press('m');
+  await page.evaluate(() => window.veditor.player.seek(0));
+  await page.keyboard.press('Shift+m');
+  const mk = await page.evaluate(() => { const { store, player } = window.veditor; return { n: store.project.markers.length, t: player.currentTime, sel: store.selection.markerId === store.sortedMarkers()[0]?.id, inspector: !!document.getElementById('markerInspector'), csv: store.markersCsv() }; });
+  await page.fill('#markerName', 'Açılış, "ilk" sahne');
+  await page.keyboard.press('Enter');
+  const csv = await page.evaluate(() => window.veditor.store.markersCsv());
+  check('markers: M adds one at the playhead, Shift+M steps to the next, the inspector renames, CSV lists them',
+    mk.n === 2 && Math.abs(mk.t - 1.25) < 0.01 && mk.sel && mk.inspector && /^Name,In,Out/.test(mk.csv) && csv.includes('"Açılış, ""ilk"" sahne"') && csv.split('\r\n').filter(Boolean).length === 3,
+    JSON.stringify({ ...mk, csv }));
+  await page.evaluate(() => { const { store } = window.veditor; for (const m of [...store.project.markers]) store.removeMarker(m.id); store.clearSelection(); });
+
+  // ripple delete, close gap, ripple trim (Q / W)
+  const ripple = await page.evaluate(() => {
+    const { store, player } = window.veditor;
+    const base = store.projectDuration() + 5;
+    const tr = store.addTrack('video');
+    const mk = (s, d) => store.addClip({ kind: 'text', text: 'R' + s, trackId: tr.id, start: base + s, duration: d });
+    const a = mk(0, 2), b = mk(2, 2), c = mk(4, 2), e = mk(8, 2);
+    store.rippleDelete([b.id]);
+    const afterRipple = { c: store.getClip(c.id).start - base, e: store.getClip(e.id).start - base, a: store.getClip(a.id).start - base };
+    const closed = store.closeGap([tr.id], base + 5);
+    const afterClose = store.getClip(e.id).start - base;
+    const cs = store.getClip(c.id).start;
+    const q = store.rippleTrim([c.id], cs + 0.5, 'start');
+    const afterQ = { start: store.getClip(c.id).start - cs, dur: store.getClip(c.id).duration };
+    store.rippleTrim([c.id], cs + 1, 'end');
+    const afterW = store.getClip(c.id).duration;
+    player.pause();
+    store.removeTrack(tr.id);
+    return { afterRipple, closed, afterClose, q, afterQ, afterW };
+  });
+  check('ripple delete, close gap and Q / W ripple trims close the holes they leave',
+    approx(ripple.afterRipple.c, 2, 0.001) && approx(ripple.afterRipple.e, 6, 0.001) && ripple.afterRipple.a === 0 && ripple.closed === 1 && approx(ripple.afterClose, 4, 0.001) && ripple.q === 1 && approx(ripple.afterQ.start, 0, 0.001) && approx(ripple.afterQ.dur, 1.5, 0.001) && approx(ripple.afterW, 1, 0.001),
+    JSON.stringify(ripple));
+
+  // captions: an SRT file becomes a caption track, and the track exports back as SRT / WebVTT
+  const srt = '1\r\n00:00:01,000 --> 00:00:02,500\r\nMerhaba <i>dünya</i>\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,000\r\nİkinci satır\r\nüçüncü\r\n';
+  const cc = await page.evaluate(async (text) => {
+    const { store, importCaptions } = window.veditor;
+    const tr = await importCaptions(new File([text], 'film.srt', { type: 'application/x-subrip' }));
+    const clips = store.clipsOnTrack(tr.id).map((c) => ({ s: c.start, d: Math.round(c.duration * 1000) / 1000, text: c.text, bg: c.bgEnabled }));
+    return { id: tr.id, name: tr.name, clips, sel: store.selection.trackId === tr.id };
+  }, srt);
+  await page.waitForSelector('[data-testid=caption-export] #btnExportVTT', { timeout: 3000 });
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#btnExportVTT')]);
+  const vtt = readFileSync(await dl.path(), 'utf8');
+  check('an SRT file imports as a caption track and exports back as WebVTT',
+    cc.clips.length === 2 && cc.clips[0].s === 1 && cc.clips[0].d === 1.5 && cc.clips[0].text === 'Merhaba dünya' && cc.clips[1].text === 'İkinci satır\nüçüncü' && cc.clips[0].bg
+      && vtt.startsWith('WEBVTT') && vtt.includes('00:00:01.000 --> 00:00:02.500\nMerhaba dünya') && vtt.includes('00:00:03.000 --> 00:00:04.000'),
+    JSON.stringify({ cc, vtt: vtt.slice(0, 120) }));
+  await page.evaluate((id) => { const { store } = window.veditor; store.removeTrack(id); store.clearSelection(); }, cc.id);
+
   // ---- the playhead is a handle of its own, and a double click on a layer opens its properties ----
   const before = await page.evaluate(() => { const { store, player } = window.veditor; player.pause(); player.seek(1); store.clearSelection(); return { starts: store.project.clips.map((c) => c.start), sel: store.selection.clipIds.size }; });
   await page.waitForTimeout(200);
@@ -499,7 +623,7 @@ try {
     layout.docW <= layout.vw && Object.values(p).every((b) => b && b.w > 60 && b.h > 60 && b.right <= layout.vw + 1 && b.bottom <= layout.vh + 1),
     JSON.stringify({ docW: layout.docW, vw: layout.vw, panels: p }));
   check('the default arrangement: settings top-left, the source player under it, the timeline across the bottom',
-    layout.tabs.length === 5 && p.inspectorPanel.x < p.previewPanel.x && p.sourcePanel.x === p.inspectorPanel.x && p.sourcePanel.y >= p.inspectorPanel.bottom - 40
+    layout.tabs.length === 6 && p.inspectorPanel.x < p.previewPanel.x && p.sourcePanel.x === p.inspectorPanel.x && p.sourcePanel.y >= p.inspectorPanel.bottom - 40
       && p.timelinePanel.y >= p.previewPanel.bottom - 40 && p.timelinePanel.w > layout.vw * 0.9 && p.libraryPanel.x > p.previewPanel.x,
     JSON.stringify({ tabs: layout.tabs, inspector: p.inspectorPanel, source: p.sourcePanel, timeline: p.timelinePanel }));
 
@@ -591,7 +715,7 @@ try {
   await page.waitForTimeout(600);
   const afterReset = await box();
   check('the default arrangement can be restored, with its original proportions',
-    afterReset.panels.libraryPanel.x > afterReset.panels.previewPanel.x && afterReset.panels.sourcePanel.x === afterReset.panels.inspectorPanel.x && afterReset.tabs.length === 5
+    afterReset.panels.libraryPanel.x > afterReset.panels.previewPanel.x && afterReset.panels.sourcePanel.x === afterReset.panels.inspectorPanel.x && afterReset.tabs.length === 6
       && approx(afterReset.panels.inspectorPanel.w, p.inspectorPanel.w, 2) && approx(afterReset.panels.libraryPanel.w, p.libraryPanel.w, 2) && approx(afterReset.panels.sourcePanel.h, p.sourcePanel.h, 2),
     JSON.stringify(afterReset.panels));
   check('Turkish locale picks Turkish UI', layout.lang === 'tr' && /Özellikler|Klip|Kanal|Proje/.test(layout.title), layout.title);
@@ -708,7 +832,7 @@ try {
     await p2.waitForFunction(() => window.veditor && window.veditor.tl && document.querySelectorAll('.clip').length === 1);
     await p2.waitForTimeout(500);
     const stackedAfter = await p2.evaluate(() => window.veditor.dock.api.getPanel('inspector').group.panels.map((x) => x.id));
-    check('the panel arrangement survives a trip through the menu', stacked.length === 2 && stackedAfter.join() === stacked.join(), JSON.stringify({ stacked, stackedAfter }));
+    check('the panel arrangement survives a trip through the menu', stacked.length === 3 && stacked.includes('scopes') && stackedAfter.join() === stacked.join(), JSON.stringify({ stacked, stackedAfter }));
     await p2.evaluate(() => window.veditor.dock.reset());
     await p2.waitForTimeout(500);
     await p2.click('#btnPlay');
