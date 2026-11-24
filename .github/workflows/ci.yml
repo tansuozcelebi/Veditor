@@ -18,7 +18,8 @@ concurrency:
 jobs:
   test:
     name: Lint & end-to-end test
-    runs-on: ubuntu-latest
+    # Playwright 1.56 cannot install Chromium's system packages on ubuntu-latest (26.04) yet
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
