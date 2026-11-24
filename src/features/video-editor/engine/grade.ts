@@ -6,8 +6,8 @@
 // white balance and exposure in linear light, then whites/blacks, hue-preserving highlights/
 // shadows, an S-curve contrast, faded film, split toning, saturation with vibrance and a vignette
 // on the sRGB-encoded signal. A layer whose grade is neutral never comes here.
-import type { Grade } from './types';
-import { defaultGrade } from './state';
+import type { CurvePoint, Curves, Grade } from './types';
+import { curveIsIdentity, defaultGrade } from './state';
 
 const VERT = `#version 300 es
 in vec2 pos;
@@ -23,6 +23,8 @@ uniform vec3 gains;
 uniform float exposure, contrast, hl, sh, wh, bl, sat, vib, faded, creative;
 uniform vec3 st, ht;
 uniform float va, vmid, vfeather, vaspect;
+uniform sampler2D lut;
+uniform float curves;
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 const float LIFT_LUMA_FLOOR = 0.02;
 const float NEUTRAL = 128.0 / 255.0;
@@ -69,6 +71,11 @@ void main() {
     float kv = 1.0 + va * 0.2 * e2;
     v = va < 0.0 ? v * max(kv, 0.0) : v + (1.0 - v) * (kv - 1.0);
   }
+  // RGB curves (master then per channel), baked into a 256-entry table per channel
+  if (curves > 0.5) {
+    vec3 q = clamp(v, 0.0, 1.0) * (255.0 / 256.0) + 0.5 / 256.0;
+    v = vec3(texture(lut, vec2(q.r, 0.5)).r, texture(lut, vec2(q.g, 0.5)).g, texture(lut, vec2(q.b, 0.5)).b);
+  }
   outColor = vec4(clamp(v, 0.0, 1.0), 1.0);
 }`;
 
@@ -86,6 +93,8 @@ export class Grader {
   private gl: WebGL2RenderingContext;
   private prog: WebGLProgram;
   private tex: WebGLTexture;
+  private lutTex: WebGLTexture;
+  private lutKey = '';
   private loc: Record<string, WebGLUniformLocation | null> = {};
   private lost = false;
 
@@ -126,7 +135,13 @@ export class Grader {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    for (const n of ['tex', 'gains', 'exposure', 'contrast', 'hl', 'sh', 'wh', 'bl', 'sat', 'vib', 'faded', 'creative', 'st', 'ht', 'va', 'vmid', 'vfeather', 'vaspect']) this.loc[n] = gl.getUniformLocation(prog, n);
+    this.lutTex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.lutTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    for (const n of ['lut', 'curves', 'tex', 'gains', 'exposure', 'contrast', 'hl', 'sh', 'wh', 'bl', 'sat', 'vib', 'faded', 'creative', 'st', 'ht', 'va', 'vmid', 'vfeather', 'vaspect']) this.loc[n] = gl.getUniformLocation(prog, n);
   }
 
   /**
@@ -167,6 +182,20 @@ export class Grader {
     gl.uniform1f(u.vfeather, g.vignetteFeather / 100);
     // roundness: 0 follows the frame, 100 is a true circle, negative stretches it wider
     gl.uniform1f(u.vaspect, Math.pow(w / h, Math.max(-1, Math.min(1, g.vignetteRoundness / 100))));
+    const curvesOn = g.curvesOn && !!g.curves && !(['luma', 'red', 'green', 'blue'] as const).every((k) => curveIsIdentity(g.curves[k]));
+    gl.uniform1f(u.curves, curvesOn ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.lutTex);
+    if (curvesOn) {
+      const key = JSON.stringify(g.curves);
+      if (key !== this.lutKey) {
+        this.lutKey = key;
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, curvesLut(g.curves));
+      }
+    }
+    gl.uniform1i(u.lut, 1);
+    gl.activeTexture(gl.TEXTURE0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     return this.canvas;
   }
@@ -187,4 +216,57 @@ export const GRADE_PRESETS: { key: string; grade: Partial<Grade> }[] = [
   { key: 'halfSat', grade: { saturation: 50 } },
   { key: 'boostVibrance', grade: { vibrance: 40 } },
   { key: 'vignette', grade: { vignetteAmount: -2.5, vignetteMidpoint: 45, vignetteFeather: 60 } },
+];
+
+/**
+ * A curve through its points as a function on 0…1: monotone cubic (Fritsch–Carlson) interpolation,
+ * as FilmCraft's curve editor uses, so a curve never overshoots between its points; flat beyond the
+ * first and last point.
+ */
+export function curveFn(points: CurvePoint[]): (x: number) => number {
+  const p = points.slice().sort((a, b) => a[0] - b[0]).filter((q, i, a) => i === 0 || q[0] - a[i - 1][0] > 1e-6);
+  const n = p.length;
+  if (n === 0) return (x) => x;
+  if (n === 1) return () => p[0][1];
+  const d: number[] = [], m: number[] = new Array(n);
+  for (let i = 0; i < n - 1; i++) d.push((p[i + 1][1] - p[i][1]) / (p[i + 1][0] - p[i][0]));
+  m[0] = d[0]; m[n - 1] = d[n - 2];
+  for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
+    const a = m[i] / d[i], b = m[i + 1] / d[i], h = a * a + b * b;
+    if (h > 9) { const k = 3 / Math.sqrt(h); m[i] = k * a * d[i]; m[i + 1] = k * b * d[i]; }
+  }
+  return (x) => {
+    if (x <= p[0][0]) return p[0][1];
+    if (x >= p[n - 1][0]) return p[n - 1][1];
+    let i = 0;
+    while (i < n - 2 && x > p[i + 1][0]) i++;
+    const hgt = p[i + 1][0] - p[i][0], t = (x - p[i][0]) / hgt, t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * p[i][1] + (t3 - 2 * t2 + t) * hgt * m[i] + (-2 * t3 + 3 * t2) * p[i + 1][1] + (t3 - t2) * hgt * m[i + 1];
+  };
+}
+
+/** The curves as a 256×1 RGBA table: the master curve, then each channel's own. */
+export function curvesLut(c: Curves): Uint8Array {
+  const master = curveFn(c.luma), fr = curveFn(c.red), fg = curveFn(c.green), fb = curveFn(c.blue);
+  const out = new Uint8Array(256 * 4);
+  const q = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 255);
+  for (let i = 0; i < 256; i++) {
+    const m = Math.min(1, Math.max(0, master(i / 255)));
+    out[i * 4] = q(fr(m)); out[i * 4 + 1] = q(fg(m)); out[i * 4 + 2] = q(fb(m)); out[i * 4 + 3] = 255;
+  }
+  return out;
+}
+
+/** Ready-made curves (the last two after FilmCraft's Cross Processed and Legal Range presets). */
+export const CURVE_PRESETS: { key: string; curves: Partial<Curves> }[] = [
+  { key: 'sCurve', curves: { luma: [[0, 0], [0.25, 0.18], [0.75, 0.84], [1, 1]] } },
+  { key: 'strongS', curves: { luma: [[0, 0], [0.25, 0.12], [0.75, 0.9], [1, 1]] } },
+  { key: 'matte', curves: { luma: [[0, 0.1], [0.3, 0.3], [0.85, 0.88], [1, 0.95]] } },
+  { key: 'brighten', curves: { luma: [[0, 0], [0.5, 0.62], [1, 1]] } },
+  { key: 'darken', curves: { luma: [[0, 0], [0.5, 0.38], [1, 1]] } },
+  { key: 'invert', curves: { luma: [[0, 1], [1, 0]] } },
+  { key: 'crossProcess', curves: { red: [[0, 0], [0.5, 0.56], [1, 1]], green: [[0, 0.02], [0.5, 0.54], [1, 0.98]], blue: [[0, 0.12], [1, 0.82]] } },
+  { key: 'legalRange', curves: { luma: [[0, 16 / 255], [1, 235 / 255]] } },
 ];

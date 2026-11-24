@@ -38,7 +38,8 @@ kopyalanıp takılabilir. Ayrıntılar için [Başka bir uygulamaya entegrasyon]
 | **Efektler** | After Effects tarzı **karışım modları** (Çarp, Ekran, Kaplama, Fark, Renk… 16 mod), parlaklık, kontrast, doygunluk, ton, bulanıklık, sepya, siyah-beyaz ve hazır görünümler (Siyah-beyaz, Sepya, Canlı, Soluk, Soğuk, Sıcak). |
 | **Keyframe animasyonu** | Konum, ölçek, döndürme ve opaklık için keyframe'ler: "Animasyonu başlat" ile açılır, açıkken yapılan her değişiklik (panelden veya önizlemede sürükleyerek) oynatma kafasında keyframe oluşturur; geçiş eğrileri (doğrusal, Easy Ease, yavaş başla/bitir, tut), önceki/sonraki keyframe'e atlama, zaman çizelgesinde elmas işaretleri ve hazır hareketler (Ken Burns yakınlaş/uzaklaş, sola/sağa kaydır, dönerek gel, zıplayarak gel). |
 | **Büyüteç katmanı** | "Büyüteç" düğmesiyle eklenen katman, altındaki tüm katmanları mercek içinde büyütür: büyütme oranı, mercek boyutu, şekil (daire, yuvarlak köşeli, kare), çerçeve rengi/kalınlığı ve gölge; önizlemede taşınır, keyframe'le hareket ettirilebilir. |
-| **Renk düzenleme (Lumetri)** | Video/görsel katmanlarında GPU (WebGL2) üzerinde çalışan renk paneli: **Temel düzeltme** (sıcaklık, tint, pozlama, kontrast, parlak alanlar, gölgeler, beyazlar, siyahlar, doygunluk), **Yaratıcı** (canlılık, solmuş film, yaratıcı doygunluk, gölge/parlak alan tonlama) ve **Vinyet** (miktar, orta nokta, yuvarlaklık, yumuşaklık); her bölüm ayrı açılıp kapanır, 13 hazır görünüm. Matematik FilmCraft'tan uyarlandı (aşağıya bakın). |
+| **Renk düzenleme (Lumetri)** | Video/görsel katmanlarında GPU (WebGL2) üzerinde çalışan renk paneli: **Temel düzeltme** (sıcaklık, tint, pozlama, kontrast, parlak alanlar, gölgeler, beyazlar, siyahlar, doygunluk), **Yaratıcı** (canlılık, solmuş film, yaratıcı doygunluk, gölge/parlak alan tonlama) ve **Vinyet** (miktar, orta nokta, yuvarlaklık, yumuşaklık); **Eğriler**: ana + kırmızı/yeşil/mavi RGB eğrileri, grafiğe tıklayıp nokta ekleme, sürükleme, çift tıkla silme (monoton kübik, taşma yok) ve 8 hazır eğri; her bölüm ayrı açılıp kapanır, 13 hazır görünüm. Matematik FilmCraft'tan uyarlandı (aşağıya bakın). |
+| **Ses efektleri** | Ses içeren her klipte: alçak/yüksek kesme filtreleri, 3 bantlı EQ (bas, ayarlanabilir orta, tiz), kompresör (eşik, oran, atak, bırakma, kazanç), yankı (süre, tekrar, miktar), reverb (süre, miktar) ve pan; 12 hazır ayar (ses netliği, podcast, telefon, radyo, salon…). Önizlemede ve dışa aktarımda aynı duyulur. |
 | **Scope ve ses ölçer** | Ayrı panel: dalga formu (luma), RGB parade, vektörskop (renk hedefleri ve ten çizgisi) ve histogram; karışımın **EBU R128 / BS.1770** ses yüksekliği: anlık, kısa süreli ve entegre LUFS, sol/sağ tepe, hedef seçimi (−14 YouTube/Spotify, −16, −23 yayın, −24). |
 | **İşaretçiler** | **M** ile oynatma kafasına işaretçi, cetvelde renkli bayrak ve ad; tıklayınca seçilir, Özellikler panelinde ad/renk/süre/not düzenlenir, **Shift+M** / **Ctrl+Shift+M** ile sonraki/önceki; tüm işaretçiler **CSV** olarak dışa aktarılır. |
 | **Ripple düzenleme** | **Ripple Sil** (Shift+Delete: silinen klibin boşluğu kapanır), **Boşluğu Kapat**, **Q / W** ile oynatma kafasına kadar ripple kırpma, **Ctrl+K** ile tüm kanallarda kesme. |
@@ -192,6 +193,7 @@ src/features/video-editor/         ▶ ÖZELLİK MODÜLÜ (host uygulamaya kopya
   engine/keyframes.ts              Keyframe animasyonu: ara değerleme, otomatik keyframe, hazır hareketler
   engine/grade.ts                  Renk düzenleme (WebGL2, FilmCraft Lumetri hesaplarından uyarlandı)
   engine/loudness.ts               EBU R128 / BS.1770 ses yüksekliği ölçümü
+  engine/audiofx.ts                Klip ses efektleri zinciri (Web Audio)
   engine/captions.ts               SRT / WebVTT okuma ve yazma
   engine/timeline.ts               Zaman çizelgesi DOM motoru (cetvel, sürükleme/kırpma/yapışma) – React ref ile sarılır
   engine/exporter.ts               MediaRecorder tabanlı dışa aktarma
@@ -492,7 +494,7 @@ türlerini ayarlar; hedef klasör bu uygulamaya ayrılmış olmalıdır.
 
 ## Teşekkür: FilmCraft
 
-Renk düzenleme, scope'lar, ses yüksekliği ölçümü, işaretçiler, ripple düzenleme ve altyazı içe/dışa
+Renk düzenleme ve eğriler, ses efektleri, scope'lar, ses yüksekliği ölçümü, işaretçiler, ripple düzenleme ve altyazı içe/dışa
 aktarma, [FilmCraft](https://github.com/storytold/filmcraft)'tan (ArtCraft ekibi; MIT veya Apache-2.0
 lisanslı, Rust ile yazılmış açık kaynak profesyonel video editörü) örnek alınarak eklendi. Renk
 düzenleme shader'ı FilmCraft'ın `crates/render/src/effects.rs` içindeki Lumetri hesaplarından,

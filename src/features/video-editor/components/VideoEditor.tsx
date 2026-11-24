@@ -17,6 +17,7 @@ import { cspViolations, isLocalMediaBlock, onCspViolation } from '../engine/csp'
 import { diagnostics, log, logDiagnostics } from '../engine/diagnostics';
 import type { Timeline } from '../engine/timeline';
 import { parseCaptions } from '../engine/captions';
+import { buildAudioFx } from '../engine/audiofx';
 import type { Clip, ExportResult, MediaItem, ProjectFile, Track } from '../engine/types';
 import { cn } from '@/lib/utils';
 import '../editor.css';
@@ -324,7 +325,7 @@ function EditorShell({ embedded, className, onExport }: VideoEditorProps) {
 
   // ---------- debug / test handle ----------
   useEffect(() => {
-    (window as any).veditor = { store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, dock, addMediaToTimeline, addTextClip, addMagnifierClip, importCaptions, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable }, server: { probeServer, transcodeOnServer, setServerToken, resetServerProbe, chooseFormat, playableFormats }, diagnostics: () => logDiagnostics(CODEC_CORE_URL), rawDiagnostics: () => diagnostics(CODEC_CORE_URL) };
+    (window as any).veditor = { audioFx: { build: buildAudioFx }, store, player, exporter, timeline: timelineRef, get tl() { return timelineRef.current; }, dock, addMediaToTimeline, addTextClip, addMagnifierClip, importCaptions, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, uid, importFiles, supportedFormats, ffmpeg: { loadFFmpeg, runFFmpeg, transcodeToPlayable }, server: { probeServer, transcodeOnServer, setServerToken, resetServerProbe, chooseFormat, playableFormats }, diagnostics: () => logDiagnostics(CODEC_CORE_URL), rawDiagnostics: () => diagnostics(CODEC_CORE_URL) };
     log('debug handle ready – window.veditor (diagnostics(), store, player, importFiles …)');
     return () => { delete (window as any).veditor; };
   }, [store, player, exporter, dock, addMediaToTimeline, addTextClip, addMagnifierClip, importCaptions, crossfadeSelected, splitSelected, deleteSelected, detachAudioSelected, importFiles]);

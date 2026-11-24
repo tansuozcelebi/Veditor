@@ -593,6 +593,104 @@ try {
     JSON.stringify({ cc, vtt: vtt.slice(0, 120) }));
   await page.evaluate((id) => { const { store } = window.veditor; store.removeTrack(id); store.clearSelection(); }, cc.id);
 
+  // ---- curves and clip audio effects ----
+  const curveCard = await page.evaluate(async () => {
+    const { store, player, importFiles } = window.veditor;
+    player.pause();
+    const cv = document.createElement('canvas'); cv.width = 320; cv.height = 180;
+    const cg = cv.getContext('2d'); cg.fillStyle = '#404040'; cg.fillRect(0, 0, 160, 180); cg.fillStyle = '#c0c0c0'; cg.fillRect(160, 0, 160, 180);
+    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+    const [m] = await importFiles([new File([blob], 'curvecard.png', { type: 'image/png' })]);
+    await new Promise((r) => { const img = store.media.get(m.id).image; if (!img || img.complete) r(); else img.onload = r; });
+    const free = store.projectDuration() + 1;
+    const top = store.addTrack('video');
+    store.project.tracks.splice(store.project.tracks.indexOf(top), 1); store.project.tracks.unshift(top);
+    const c = store.addClip({ trackId: top.id, mediaId: m.id, name: 'curvecard', start: free, duration: 3 });
+    player._syncNodes();
+    const at = free + 1, g = player.canvas.getContext('2d');
+    const px = (x) => { player.render(at); return [...g.getImageData(x, 540, 1, 1).data.slice(0, 3)]; };
+    const curves = (cv2) => store.updateClip(c.id, { grade: { ...store.getClip(c.id).grade, curves: { luma: [[0, 0], [1, 1]], red: [[0, 0], [1, 1]], green: [[0, 0], [1, 1]], blue: [[0, 0], [1, 1]], ...cv2 } } }, { silent: true });
+    const out = { dark: px(400), light: px(1500) };
+    curves({ luma: [[0, 0], [0.25, 0.12], [0.75, 0.9], [1, 1]] }); out.sDark = px(400); out.sLight = px(1500);
+    curves({ invert: 1, luma: [[0, 1], [1, 0]] }); out.inv = px(400);
+    curves({}); out.back = px(400);
+    store.selectClips([c.id]); player.seek(at);
+    return { id: c.id, mediaId: m.id, trackId: top.id, at, ...out };
+  });
+  check('RGB curves: an S-curve deepens the darks and lifts the lights, a negative curve inverts',
+    curveCard.sDark[0] < curveCard.dark[0] - 15 && curveCard.sLight[0] > curveCard.light[0] + 10 && curveCard.inv[0] > 170 && curveCard.back[0] === curveCard.dark[0],
+    JSON.stringify(curveCard));
+
+  // the curve editor: drag the red curve up in the middle, then one undo takes the whole drag back
+  await page.waitForSelector('#curveEditor', { timeout: 5000 });
+  // give the settings panel room for the whole graph, then bring it into view
+  await page.evaluate(() => { window.veditor.dock?.api.getPanel('inspector')?.group.api.setSize({ height: 700 }); });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.querySelector('[data-testid=curve-graph]').scrollIntoView({ block: 'center' }));
+  await page.click('#curveEditor [data-curve=red]');
+  const graph = await page.locator('[data-testid=curve-graph]').boundingBox();
+  await page.mouse.move(graph.x + graph.width * 0.25, graph.y + graph.height * 0.75); await page.mouse.down();
+  for (const k of [0.7, 0.62, 0.55, 0.5]) await page.mouse.move(graph.x + graph.width * 0.25, graph.y + graph.height * k);
+  await page.mouse.up();
+  const curveUi = await page.evaluate(({ id, at }) => {
+    const { store, player } = window.veditor;
+    const red = store.getClip(id).grade.curves.red;
+    player.render(at);
+    const p = [...player.canvas.getContext('2d').getImageData(400, 540, 1, 1).data.slice(0, 3)];
+    store.undo();
+    return { red, p, afterUndo: store.getClip(id).grade.curves.red.length, points: document.querySelectorAll('#curveEditor [data-point]').length };
+  }, curveCard);
+  check('the curve editor adds a point where the graph is dragged, the picture follows, and one undo removes it',
+    curveUi.red.length === 3 && Math.abs(curveUi.red[1][0] - 0.25) < 0.03 && curveUi.red[1][1] > 0.45 && curveUi.p[0] > curveUi.p[1] + 40 && curveUi.afterUndo === 2,
+    JSON.stringify(curveUi));
+  await page.evaluate(({ id, mediaId, trackId }) => { const { store } = window.veditor; store.removeClips([id]); store.removeTrack(trackId); store.removeMedia(mediaId); store.clearSelection(); }, curveCard);
+  await page.evaluate(() => window.veditor.dock?.reset());
+  await page.waitForTimeout(300);
+
+  // audio effects rendered offline: each one does what it says on a known signal
+  const afx = await page.evaluate(async () => {
+    const { build } = window.veditor.audioFx;
+    const rms = (d, from = 0) => { let s = 0; for (let i = from; i < d.length; i++) s += d[i] * d[i]; return Math.sqrt(s / Math.max(1, d.length - from)); };
+    const render = async (fx, make, seconds = 1) => {
+      const ctx = new OfflineAudioContext(2, 44100 * seconds, 44100);
+      const src = make(ctx);
+      const chain = build(ctx, { highPass: 0, lowPass: 0, eqLow: 0, eqMid: 0, eqMidFreq: 1000, eqHigh: 0, compOn: false, compThreshold: -24, compRatio: 4, compAttack: 10, compRelease: 250, compMakeup: 0, delayTime: 0.3, delayFeedback: 0.35, delayMix: 0, reverbDecay: 2, reverbMix: 0, pan: 0, ...fx });
+      src.connect(chain.input); chain.output.connect(ctx.destination);
+      const buf = await ctx.startRendering();
+      return [buf.getChannelData(0), buf.getChannelData(1)];
+    };
+    const sine = (f, a = 0.5) => (ctx) => { const o = ctx.createOscillator(); o.frequency.value = f; const g = ctx.createGain(); g.gain.value = a; o.connect(g); o.start(); return g; };
+    const click = (ctx) => { const b = ctx.createBuffer(1, 441, 44100); b.getChannelData(0).fill(0.8); const s = ctx.createBufferSource(); s.buffer = b; s.start(); return s; };
+    const ratio = async (fx, src) => rms((await render(fx, src))[0], 4410) / rms((await render({}, src))[0], 4410);
+    return {
+      highPass: await ratio({ highPass: 1000 }, sine(100)),
+      lowPass: await ratio({ lowPass: 500 }, sine(5000)),
+      bass: await ratio({ eqLow: 12 }, sine(60)),
+      comp: await ratio({ compOn: true, compThreshold: -30, compRatio: 10, compAttack: 1 }, sine(440, 0.9)),
+      panRight: await (async () => { const [l, r] = await render({ pan: -1 }, sine(440)); return { l: rms(l), r: rms(r) }; })(),
+      reverbTail: rms((await render({ reverbMix: 0.6, reverbDecay: 2 }, click))[0], 22050),
+      dryTail: rms((await render({}, click))[0], 22050),
+      echo: await (async () => { const [l] = await render({ delayMix: 0.8, delayTime: 0.25, delayFeedback: 0 }, click); let m = 0; for (let i = 11000; i < 11500; i++) m = Math.max(m, Math.abs(l[i])); return m; })(),
+    };
+  });
+  check('clip audio effects: high/low-pass cut, the EQ boosts, the compressor tames, pan, echo and reverb work',
+    afx.highPass < 0.1 && afx.lowPass < 0.1 && afx.bass > 2.5 && afx.comp < 0.7 && afx.panRight.r < 0.001 && afx.panRight.l > 0.3 && afx.reverbTail > 0.001 && afx.dryTail < 1e-6 && afx.echo > 0.3,
+    JSON.stringify(afx));
+
+  // in the player, a clip gets an effect chain only while it has an effect
+  const routed = await page.evaluate(() => {
+    const { store, player } = window.veditor;
+    player.ensureAudio(); player._syncNodes();
+    const c = store.project.clips.find((x) => player.nodes.get(x.id)?.src);
+    if (!c) return { found: false };
+    const n = player.nodes.get(c.id);
+    store.updateClip(c.id, { audioFx: { ...c.audioFx, pan: 0.5 } }, { silent: true }); player._syncElements(player.currentTime);
+    const on = !!n.fx;
+    store.updateClip(c.id, { audioFx: { ...c.audioFx, pan: 0 } }, { silent: true }); player._syncElements(player.currentTime);
+    return { found: true, on, off: !n.fx };
+  });
+  check('a clip is routed through its effect chain only while an effect is set', routed.found && routed.on && routed.off, JSON.stringify(routed));
+
   // ---- the playhead is a handle of its own, and a double click on a layer opens its properties ----
   const before = await page.evaluate(() => { const { store, player } = window.veditor; player.pause(); player.seek(1); store.clearSelection(); return { starts: store.project.clips.map((c) => c.start), sel: store.selection.clipIds.size }; });
   await page.waitForTimeout(200);
