@@ -28,6 +28,29 @@ export interface Grade {
   highlights: number; shadows: number; whites: number; blacks: number; saturation: number;
   creativeOn: boolean; vibrance: number; fadedFilm: number; creativeSat: number; shadowTint: string; highlightTint: string;
   vignetteOn: boolean; vignetteAmount: number; vignetteMidpoint: number; vignetteRoundness: number; vignetteFeather: number;
+  /** RGB curves: a master curve on all channels, then one per channel; points are [input, output] in 0…1. */
+  curvesOn: boolean; curves: Curves;
+}
+
+export type CurvePoint = [number, number];
+export interface Curves { luma: CurvePoint[]; red: CurvePoint[]; green: CurvePoint[]; blue: CurvePoint[] }
+
+/**
+ * Audio effects of a clip, after FilmCraft's clip effects: filters, a three-band EQ, a compressor,
+ * echo, reverb and pan. Neutral values (0 Hz filters, 0 dB bands, 0 mixes) leave the sound untouched.
+ */
+export interface AudioFx {
+  /** High-pass / low-pass corner in Hz; 0 = off. */
+  highPass: number; lowPass: number;
+  /** Shelf at 120 Hz, a bell at `eqMidFreq`, shelf at 8 kHz; gains in dB. */
+  eqLow: number; eqMid: number; eqMidFreq: number; eqHigh: number;
+  compOn: boolean; compThreshold: number; compRatio: number; compAttack: number; compRelease: number; compMakeup: number;
+  /** Echo: time in seconds, feedback 0…0.9, mix 0…1. */
+  delayTime: number; delayFeedback: number; delayMix: number;
+  /** Reverb: decay in seconds, mix 0…1. */
+  reverbDecay: number; reverbMix: number;
+  /** −1 (left) … 1 (right). */
+  pan: number;
 }
 
 /** A named point (or range) on the timeline. */
@@ -75,6 +98,8 @@ export interface Clip {
   magZoom: number; magSize: number; magShape: MagnifierShape; magBorderColor: string; magBorderWidth: number; magShadow: boolean;
   /** Colour grade (picture layers). */
   grade: Grade;
+  /** Audio effects (clips with sound). */
+  audioFx: AudioFx;
 }
 
 export interface Project {

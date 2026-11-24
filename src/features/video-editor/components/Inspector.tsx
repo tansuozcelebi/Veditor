@@ -6,11 +6,13 @@ import { Field, RangeField, SectionTitle } from './Field';
 import { useEditor, useI18n, useStoreEvents } from '../hooks/useEditor';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { RESOLUTIONS, TRANSITION_GROUPS, FONT_GROUPS, MARKER_COLORS, clamp, defaultGrade, formatTime, gradeActive } from '../engine/state';
+import { RESOLUTIONS, TRANSITION_GROUPS, FONT_GROUPS, MARKER_COLORS, audioFxActive, clamp, defaultAudioFx, defaultCurves, defaultGrade, formatTime, gradeActive } from '../engine/state';
 import { cuesFromClips, downloadText, formatCaptions } from '../engine/captions';
-import { GRADE_PRESETS } from '../engine/grade';
+import { CURVE_PRESETS, GRADE_PRESETS } from '../engine/grade';
+import { AUDIO_FX_PRESETS } from '../engine/audiofx';
+import { CurveEditor } from './CurveEditor';
 import { customFonts, ensureFont, onFontsChange, registerFontFile } from '../engine/fonts';
-import type { BlendMode, Clip, Grade, Marker, KeyframeEase, MagnifierShape, Track, TransitionType } from '../engine/types';
+import type { AudioFx, BlendMode, Clip, Curves, Grade, Marker, KeyframeEase, MagnifierShape, Track, TransitionType } from '../engine/types';
 import { KEYFRAME_EASES, MOTION_PRESETS, animatedAt, keyedPatch, keyframeIndexAt, presetKeyframes, removeKeyframe, setKeyframe, toggleAnimation, type MotionPreset } from '../engine/keyframes';
 import { cn } from '@/lib/utils';
 
@@ -122,6 +124,7 @@ function ClipInspector({ clip: c, actions }: { clip: Clip; actions: InspectorAct
             <Field label={t('inspector.fadeIn')}><NumberInput value={c.fadeIn} min={0} max={c.duration} step={0.1} onChange={(v) => upd({ fadeIn: clamp(v, 0, c.duration) })} /></Field>
             <Field label={t('inspector.fadeOut')}><NumberInput value={c.fadeOut} min={0} max={c.duration} step={0.1} onChange={(v) => upd({ fadeOut: clamp(v, 0, c.duration) })} /></Field>
           </div>
+          <AudioFxSection clip={c} upd={upd} live={live} commit={commit} />
         </>
       )}
 
@@ -268,7 +271,15 @@ function ColorSection({ clip: c, upd, live, commit }: { clip: Clip; upd: Upd; li
     <RangeField testId={'grade-' + k} label={t('grade.' + k)} value={g[k] as number} min={min} max={max} step={step} unit={unit}
       onChange={(v) => set({ [k]: v } as Partial<Grade>, true)} onCommit={commit} />
   );
-  const head = (k: 'basicOn' | 'creativeOn' | 'vignetteOn', label: string) => (
+  const { store } = useEditor();
+  // a curve drag is one undo step: the state before it is kept until the pointer lets go
+  const before = useRef<string | null>(null);
+  const curvesLive = (cv: Curves) => { before.current ??= store.snapshot(); set({ curves: cv }, true); store.emit('change', { reason: 'curves-live' }); };
+  const curvesCommit = (cv: Curves) => {
+    if (before.current) { store.pushHistory(before.current); before.current = null; store.updateClip(c.id, { grade: { ...c.grade, curves: cv } }, { history: false }); }
+    else set({ curves: cv });
+  };
+  const head = (k: 'basicOn' | 'creativeOn' | 'vignetteOn' | 'curvesOn', label: string) => (
     <div className="mt-1 flex items-center justify-between gap-2">
       <span className="text-xs font-medium">{label}</span>
       <Toggle id={'grade-' + k} on={g[k]} onClick={() => set({ [k]: !g[k] } as Partial<Grade>)}>{g[k] ? t('grade.on') : t('grade.off')}</Toggle>
@@ -310,7 +321,68 @@ function ColorSection({ clip: c, upd, live, commit }: { clip: Clip; upd: Upd; li
           {slider('vignetteRoundness', -100, 100, 1)}{slider('vignetteFeather', 0, 100, 1)}
         </div>
       )}
+      {head('curvesOn', t('curves.title'))}
+      {g.curvesOn && (
+        <>
+          <NativeSelect id="curvePreset" size="sm" value="" onChange={(e) => { const p = CURVE_PRESETS.find((x) => x.key === e.target.value); if (p) set({ curves: defaultCurves(p.curves) }); }}>
+            <NativeSelectOption value="">{t('curves.presets')}</NativeSelectOption>
+            {CURVE_PRESETS.map((p) => <NativeSelectOption key={p.key} value={p.key}>{t('curves.preset.' + p.key)}</NativeSelectOption>)}
+          </NativeSelect>
+          <CurveEditor curves={g.curves} onLive={curvesLive} onCommit={curvesCommit} />
+        </>
+      )}
       <p className="text-muted-foreground text-xs leading-relaxed">{t('grade.hint')}</p>
+    </div>
+  );
+}
+
+/** Clip audio effects (FilmCraft's clip effects): filters, EQ, compressor, echo, reverb and pan. */
+function AudioFxSection({ clip: c, upd, live, commit }: { clip: Clip; upd: Upd; live: (p: Partial<Clip>) => void; commit: () => void }) {
+  const { t } = useI18n();
+  const f = c.audioFx;
+  const set = (p: Partial<AudioFx>, silent = false) => (silent ? live : upd)({ audioFx: { ...c.audioFx, ...p } });
+  const slider = (k: keyof AudioFx, min: number, max: number, step: number, unit: '' | '%' = '', label = 'afx.' + k) => (
+    <RangeField testId={'afx-' + k} label={t(label)} value={f[k] as number} min={min} max={max} step={step} unit={unit}
+      onChange={(v) => set({ [k]: v } as Partial<AudioFx>, true)} onCommit={commit} />
+  );
+  return (
+    <div id="audioFxSection" className="flex flex-col gap-2.5" data-active={audioFxActive(f)}>
+      <SectionTitle>{t('afx.section')}</SectionTitle>
+      <div className="flex gap-1.5">
+        <NativeSelect id="audioFxPreset" size="sm" value="" onChange={(e) => { const p = AUDIO_FX_PRESETS.find((x) => x.key === e.target.value); if (p) upd({ audioFx: defaultAudioFx(p.fx) }); }}>
+          <NativeSelectOption value="">{t('afx.presets')}</NativeSelectOption>
+          {AUDIO_FX_PRESETS.map((p) => <NativeSelectOption key={p.key} value={p.key}>{t('afx.preset.' + p.key)}</NativeSelectOption>)}
+        </NativeSelect>
+        <Button id="btnAudioFxReset" size="sm" variant="outline" className="h-8 shrink-0" disabled={!audioFxActive(f)} onClick={() => upd({ audioFx: defaultAudioFx() })}>⟲ {t('grade.reset')}</Button>
+      </div>
+      <span className="text-xs font-medium">{t('afx.filters')}</span>
+      <div className="grid grid-cols-2 gap-2.5">
+        {slider('highPass', 0, 1000, 5)}{slider('lowPass', 0, 20000, 50)}
+      </div>
+      <span className="text-xs font-medium">{t('afx.eq')}</span>
+      <div className="grid grid-cols-2 gap-2.5">
+        {slider('eqLow', -18, 18, 0.5)}{slider('eqHigh', -18, 18, 0.5)}
+        {slider('eqMid', -18, 18, 0.5)}{slider('eqMidFreq', 200, 8000, 50)}
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium">{t('afx.comp')}</span>
+        <Toggle id="afx-compOn" on={f.compOn} onClick={() => set({ compOn: !f.compOn })}>{f.compOn ? t('grade.on') : t('grade.off')}</Toggle>
+      </div>
+      {f.compOn && (
+        <div className="grid grid-cols-2 gap-2.5">
+          {slider('compThreshold', -60, 0, 1)}{slider('compRatio', 1, 20, 0.5)}
+          {slider('compAttack', 0, 200, 1)}{slider('compRelease', 10, 1000, 10)}
+          {slider('compMakeup', 0, 24, 0.5)}
+        </div>
+      )}
+      <span className="text-xs font-medium">{t('afx.space')}</span>
+      <div className="grid grid-cols-2 gap-2.5">
+        {slider('delayMix', 0, 1, 0.01, '%')}{slider('delayTime', 0.02, 2, 0.01)}
+        {slider('delayFeedback', 0, 0.9, 0.01, '%')}<div />
+        {slider('reverbMix', 0, 1, 0.01, '%')}{slider('reverbDecay', 0.2, 8, 0.1)}
+        {slider('pan', -1, 1, 0.01)}
+      </div>
+      <p className="text-muted-foreground text-xs leading-relaxed">{t('afx.hint')}</p>
     </div>
   );
 }

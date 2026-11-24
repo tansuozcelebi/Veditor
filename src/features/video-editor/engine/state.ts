@@ -1,6 +1,6 @@
 // ===================== Project state, selection and undo/redo =====================
 import { t } from './i18n';
-import type { Clip, Grade, Marker, Project, Track, TrackKind, MediaItem, PlacementKind, Transition, ProjectFile } from './types';
+import type { AudioFx, Clip, CurvePoint, Curves, Grade, Marker, Project, Track, TrackKind, MediaItem, PlacementKind, Transition, ProjectFile } from './types';
 export type { Clip, Project, Track, TrackKind, MediaItem, PlacementKind, Transition, ProjectFile } from './types';
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -43,8 +43,34 @@ export function defaultGrade(patch: Partial<Grade> = {}): Grade {
     basicOn: true, temperature: 0, tint: 0, exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, saturation: 100,
     creativeOn: true, vibrance: 0, fadedFilm: 0, creativeSat: 100, shadowTint: '#808080', highlightTint: '#808080',
     vignetteOn: true, vignetteAmount: 0, vignetteMidpoint: 50, vignetteRoundness: 0, vignetteFeather: 50,
+    curvesOn: true,
+    ...patch,
+    curves: defaultCurves(patch.curves),
+  };
+}
+
+const IDENTITY: CurvePoint[] = [[0, 0], [1, 1]];
+export function defaultCurves(patch: Partial<Curves> = {}): Curves {
+  const copy = (p?: CurvePoint[]) => (p && p.length >= 2 ? p.map(([x, y]) => [x, y] as CurvePoint) : IDENTITY.map(([x, y]) => [x, y] as CurvePoint));
+  return { luma: copy(patch.luma), red: copy(patch.red), green: copy(patch.green), blue: copy(patch.blue) };
+}
+/** A curve that maps every value to itself. */
+export function curveIsIdentity(p: CurvePoint[]): boolean {
+  return p.every(([x, y]) => Math.abs(x - y) < 1e-4);
+}
+
+export function defaultAudioFx(patch: Partial<AudioFx> = {}): AudioFx {
+  return {
+    highPass: 0, lowPass: 0, eqLow: 0, eqMid: 0, eqMidFreq: 1000, eqHigh: 0,
+    compOn: false, compThreshold: -24, compRatio: 4, compAttack: 10, compRelease: 250, compMakeup: 0,
+    delayTime: 0.3, delayFeedback: 0.35, delayMix: 0, reverbDecay: 2, reverbMix: 0, pan: 0,
     ...patch,
   };
+}
+/** Whether a clip's audio effects change its sound at all (otherwise no effect chain is built). */
+export function audioFxActive(f: AudioFx | undefined): boolean {
+  if (!f) return false;
+  return f.highPass > 0 || f.lowPass > 0 || f.eqLow !== 0 || f.eqMid !== 0 || f.eqHigh !== 0 || f.compOn || f.delayMix > 0 || f.reverbMix > 0 || f.pan !== 0;
 }
 
 /** Whether a grade changes the picture at all (an untouched clip skips the grading pass entirely). */
@@ -53,7 +79,8 @@ export function gradeActive(g: Grade | undefined): boolean {
   const n = defaultGrade();
   const basic = g.basicOn && (['temperature', 'tint', 'exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks', 'saturation'] as const).some((k) => g[k] !== n[k]);
   const creative = g.creativeOn && (g.vibrance !== 0 || g.fadedFilm !== 0 || g.creativeSat !== 100 || g.shadowTint.toLowerCase() !== '#808080' || g.highlightTint.toLowerCase() !== '#808080');
-  return basic || creative || (g.vignetteOn && g.vignetteAmount !== 0);
+  const curves = g.curvesOn && !!g.curves && !(['luma', 'red', 'green', 'blue'] as const).every((k) => curveIsIdentity(g.curves[k]));
+  return basic || creative || curves || (g.vignetteOn && g.vignetteAmount !== 0);
 }
 
 /** Marker colours, as on a professional timeline. */
@@ -93,13 +120,14 @@ export function defaultClip(patch: Partial<Clip> = {}): Clip {
     reflection: false, reflectionOpacity: 0.4, reflectionGap: 0, reflectionLength: 60, letterSpacing: 0,
     rotation: 0, cropL: 0, cropT: 0, cropR: 0, cropB: 0, flipH: false, flipV: false, blendMode: 'normal',
     brightness: 100, contrast: 100, saturation: 100, hue: 0, blur: 0, sepia: 0, grayscale: 0,
-    keyframes: [], grade: defaultGrade(),
+    keyframes: [], grade: defaultGrade(), audioFx: defaultAudioFx(),
     magZoom: 2, magSize: 18, magShape: 'circle', magBorderColor: '#ffffff', magBorderWidth: 0.5, magShadow: true,
     ...patch,
   };
   // keyframes are edited by replacing the array; a copy keeps duplicates and splits independent
   c.keyframes = (patch.keyframes ?? []).map((k) => ({ ...k }));
   c.grade = defaultGrade(patch.grade);
+  c.audioFx = defaultAudioFx(patch.audioFx);
   c.transIn = defaultTransition(patch.transIn);
   c.transOut = defaultTransition(patch.transOut);
   return c;

@@ -1,12 +1,17 @@
 // ===================== Playback engine: canvas compositor + Web Audio mixer =====================
-import { clamp, gradeActive, type Store } from './state';
+import { audioFxActive, clamp, gradeActive, type Store } from './state';
+import { buildAudioFx, type AudioFxChain } from './audiofx';
 import { Grader } from './grade';
 import { LoudnessMeter } from './loudness';
 import { ensureFont } from './fonts';
 import { animatedAt } from './keyframes';
 import type { Clip, Track, TransitionType } from './types';
 
-export interface MediaNode { el: HTMLVideoElement | HTMLAudioElement | HTMLImageElement | null; gain: GainNode | null; src?: MediaElementAudioSourceNode; kind: string; mediaId: string; trackId: string | null; ready: boolean; lastSeek: number }
+export interface MediaNode {
+  el: HTMLVideoElement | HTMLAudioElement | HTMLImageElement | null; gain: GainNode | null; src?: MediaElementAudioSourceNode; kind: string; mediaId: string; trackId: string | null; ready: boolean; lastSeek: number;
+  /** The clip's audio effect chain, between the source and its gain, while it has any effect. */
+  fx?: AudioFxChain; fxKey?: string;
+}
 /** `next` is set on a predecessor that is drawn only because `next` is transitioning in over it. */
 export interface VisualEntry { clip: Clip; track: Track; extended: boolean; next?: Clip }
 export type ShapeKind = 'iris' | 'diamond' | 'clock' | 'barn-h' | 'barn-v' | 'blinds-h' | 'blinds-v';
@@ -252,7 +257,7 @@ export class Player extends Emitter {
   }
   _disposeNode(id: string) {
     const n = this.nodes.get(id); if (!n) return;
-    try { n.gain?.disconnect(); n.src?.disconnect(); } catch { /* ignore */ }
+    try { n.gain?.disconnect(); n.src?.disconnect(); n.fx?.disconnect(); } catch { /* ignore */ }
     if (n.el && n.el.tagName !== 'IMG') { const el = n.el as HTMLMediaElement; try { el.pause(); el.removeAttribute('src'); el.load(); el.remove(); } catch { /* ignore */ } }
     this.nodes.delete(id);
   }
@@ -399,6 +404,7 @@ export class Player extends Emitter {
       const extended = e && t >= end && t < e.until;
       const active = (t >= clip.start && t < end) || extended;
       const localT = clip.offset + (t - clip.start);
+      this._routeFx(n, clip);
       if (active) {
         let g = this._clipGain(clip, track, extended ? end - 1e-6 : t, solo);
         // audio cross-fade with the neighbouring clip during a transition
@@ -434,6 +440,25 @@ export class Player extends Emitter {
           n.lastSeek = clip.offset; el.currentTime = clip.offset;
         }
       }
+    }
+  }
+
+  /** Puts a clip's effect chain between its source and its gain while it has effects, and keeps it current. */
+  _routeFx(n: MediaNode, clip: Clip) {
+    if (!n.src || !n.gain || !this.audio) return;
+    const want = audioFxActive(clip.audioFx);
+    if (want && !n.fx) {
+      n.fx = buildAudioFx(this.audio, clip.audioFx);
+      n.fxKey = JSON.stringify(clip.audioFx);
+      try { n.src.disconnect(); } catch { /* ignore */ }
+      n.src.connect(n.fx.input); n.fx.output.connect(n.gain);
+    } else if (!want && n.fx) {
+      n.fx.disconnect(); n.fx = undefined; n.fxKey = undefined;
+      try { n.src.disconnect(); } catch { /* ignore */ }
+      n.src.connect(n.gain);
+    } else if (n.fx) {
+      const key = JSON.stringify(clip.audioFx);
+      if (key !== n.fxKey) { n.fxKey = key; n.fx.update(clip.audioFx); }
     }
   }
 
